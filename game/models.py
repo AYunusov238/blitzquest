@@ -138,7 +138,7 @@ class Game(models.Model):
                 }
             )
 
-        return {
+        payload = {
             "id": self.id,
             "code": self.code,
             "mode": self.mode,
@@ -153,6 +153,14 @@ class Game(models.Model):
             "tiles": tiles_payload,
             "you_player_id": me.id if me is not None else None,
         }
+
+        # ADD THIS (does not break existing consumers)
+        if self.status == "finished" or self.winner_id is not None:
+            payload["leaderboard"] = self.build_leaderboard()
+
+        return payload
+
+
     def last_tile_index(self) -> int:
         """
         Returns the index of the last tile on the board.
@@ -311,46 +319,80 @@ class Game(models.Model):
 
         # ---------- WARP (single player move) ----------
         if t == BoardTile.TileType.WARP:
-            # value_int can be steps OR absolute target; default to relative move
-            offset = cfg.get("warp_offset")
-            if offset is None:
-                # fallback: use value as offset; default 2
-                offset = value if value is not None else 2
-            try:
-                offset = int(offset)
-            except (TypeError, ValueError):
-                offset = 2
+            import random as _r
 
-            new_pos = clamp_position(start_pos + offset)
+            # Board size: use your real source if you have it
+            board_size = int(effects["extra"].get("board_size") or 0)
+            if not board_size:
+                board_size = self.tiles.count() if hasattr(self, "tiles") else 50
+
+            distance = _r.randint(1, 3)        # 1..3
+            direction = _r.choice([-1, 1])     # back or forward
+            delta = direction * distance
+
+            new_pos = (start_pos + delta) % board_size
+
             player.position = new_pos
             player.save(update_fields=["position"])
 
-            effects["position_delta"] = new_pos - start_pos
+            effects["position_delta"] = delta
             effects["position_set"] = new_pos
+            effects["extra"].update({
+                "warp": {
+                    "range": [1, 3],
+                    "direction": "forward" if direction == 1 else "back",
+                    "distance": distance,
+                    "from": start_pos,
+                    "to": new_pos,
+                }
+            })
             return effects
 
         # ---------- MASS_WARP (all players move) ----------
         if t == BoardTile.TileType.MASS_WARP:
-            # Move all alive players to the same target position
-            target = cfg.get("warp_target")
-            if target is None:
-                target = value if value is not None else self.last_tile_index() // 2
+            import random as _r
 
-            try:
-                target = int(target)
-            except (TypeError, ValueError):
-                target = self.last_tile_index() // 2
+            alive_players = list(self.players.filter(is_alive=True).order_by("id"))
 
-            target = clamp_position(target)
+            # Board size: prefer config; otherwise infer from tiles
+            board_size = int(effects["extra"].get("board_size") or 0)
+            if not board_size:
+                # If you have a BoardTile model related to game/board, adjust this query accordingly
+                board_size = self.tiles.count() if hasattr(self, "tiles") else 50
 
-            moved_ids = []
-            for p in self.players.filter(is_alive=True):
-                p.position = target
+            moved = []
+
+            for p in alive_players:
+                start = p.position
+
+                distance = _r.randint(1, 3)         # 1..3
+                direction = _r.choice([-1, 1])      # back or forward
+                delta = direction * distance
+
+                new_pos = (start + delta) % board_size
+
+                p.position = new_pos
                 p.save(update_fields=["position"])
-                moved_ids.append(p.id)
 
-            effects["position_set"] = target
-            effects["mass_moved_player_ids"] = moved_ids
+                moved.append({
+                    "player_id": p.id,
+                    "from": start,
+                    "to": new_pos,
+                    "delta": delta,
+                    "distance": distance,
+                    "direction": "forward" if direction == 1 else "back",
+                })
+
+            # Tell frontend what happened
+            effects["extra"]["mass_warp"] = {
+                "range": [1, 3],
+                "moved": moved,
+            }
+
+            # Landing player itself is already included above; we don’t need a single position_delta here.
+            effects["position_delta"] = 0
+            effects["position_set"] = player.position
+
             return effects
 
         # ---------- DUEL ----------
@@ -428,6 +470,50 @@ class Game(models.Model):
 
         # Fallback: no effect
         return effects
+
+    def build_leaderboard(self):
+        """
+        Returns a ranked leaderboard suitable for JSON.
+        Ranking rule:
+        1) highest position wins
+        2) tie-break: higher coins
+        3) tie-break: higher hp
+        """
+        players_qs = self.players.select_related("user").all()
+
+        ranked = sorted(
+            players_qs,
+            key=lambda p: (
+                -int(p.position or 0),
+                -int(p.coins or 0),
+                -int(p.hp or 0),
+            ),
+        )
+
+        leaderboard = []
+        for idx, p in enumerate(ranked, start=1):
+            if idx == 1 and self.winner_id:
+                status = "Winner"
+            else:
+                # Use your own alive logic
+                status = "Alive" if getattr(p, "is_alive", True) else "Eliminated"
+
+            leaderboard.append(
+                {
+                    "rank": idx,
+                    "player_id": p.id,
+                    "user_id": p.user_id,
+                    "username": p.user.username,
+                    "position": p.position,
+                    "coins": p.coins,
+                    "hp": p.hp,
+                    "is_alive": p.is_alive,
+                    "status": status,
+                }
+            )
+
+        return leaderboard
+
 
 
     def advance_turn(self):

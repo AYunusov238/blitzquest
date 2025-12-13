@@ -226,11 +226,26 @@ async function fetchGameState(gameId) {
             headers: { "X-Requested-With": "XMLHttpRequest" }
         });
         if (!resp.ok) return;
+
         const data = await resp.json();
+
         updateBoardUI(data);
         updatePlayersUI(data);
         updateDiceUI(data);
         renderPlayerTokens(data);
+
+        // NEW: if game finished -> show congrats popup + stop polling
+        if (data && (data.status === "finished" || data.has_winner === true)) {
+            // show modal (requires the modal HTML + bqOpenFinishModal from earlier)
+            bqOpenFinishModal(data);
+
+            // stop polling if you are polling with setInterval
+            if (window.gamePoller) {
+                clearInterval(window.gamePoller);
+                window.gamePoller = null;
+            }
+        }
+
     } catch (e) {
         console.error("board state error:", e);
     }
@@ -408,3 +423,76 @@ document.addEventListener("DOMContentLoaded", function () {
     const rollBtn = document.getElementById("roll-button");
     if (rollBtn) rollBtn.addEventListener("click", handleRollClick);
 });
+function bqOpenFinishModal(state) {
+  const modal = document.getElementById("finishModal");
+  const tbody = document.getElementById("finishLeaderboardBody");
+  const closeBtn = document.getElementById("finishCloseBtn");
+  const backBtn = document.getElementById("backToLobbyBtn");
+
+  if (!modal || !tbody) return;
+
+  // Back button fallback if you prefer JS redirect
+  if (backBtn && window.BQ_LOBBY_URL) {
+    backBtn.href = window.BQ_LOBBY_URL;
+  }
+
+  // Render leaderboard
+  tbody.innerHTML = "";
+
+  const lb = (state && state.leaderboard) ? state.leaderboard : [];
+  lb.forEach(row => {
+    const status = (row.status || "").toLowerCase();
+    const pillClass =
+      status === "winner" ? "winner" :
+      status === "eliminated" ? "eliminated" : "alive";
+
+    const tr = document.createElement("tr");
+    if (row.rank === 1 || status === "winner") tr.classList.add("bq-row-winner");
+
+    tr.innerHTML = `
+      <td>${row.rank ?? ""}</td>
+      <td>${escapeHtml(row.username ?? "")}</td>
+      <td>${row.position ?? ""}</td>
+      <td>${row.coins ?? ""}</td>
+      <td>${row.hp ?? ""}</td>
+      <td><span class="bq-pill ${pillClass}">${escapeHtml(row.status ?? "")}</span></td>
+    `;
+
+    tbody.appendChild(tr);
+  });
+
+  // Show modal
+  modal.classList.remove("bq-hidden");
+  modal.setAttribute("aria-hidden", "false");
+
+  // Close handlers
+  const close = () => {
+    modal.classList.add("bq-hidden");
+    modal.setAttribute("aria-hidden", "true");
+  };
+
+  if (closeBtn) closeBtn.onclick = close;
+
+  // Close when clicking backdrop (not the card)
+  modal.onclick = (e) => {
+    if (e.target === modal) close();
+  };
+
+  // ESC key closes
+  document.addEventListener("keydown", function escHandler(ev) {
+    if (ev.key === "Escape") {
+      close();
+      document.removeEventListener("keydown", escHandler);
+    }
+  });
+}
+
+// minimal XSS-safe output for usernames
+function escapeHtml(str) {
+  return String(str)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
