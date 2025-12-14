@@ -1,5 +1,6 @@
 import secrets
 import string
+import json
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -344,8 +345,8 @@ def game_roll(request, game_id: int):
     """
     game = get_object_or_404(Game, id=game_id)
 
-    if game.status != Game.Status.ACTIVE:
-        return JsonResponse({"detail": "Game is not active."}, status=400)
+    if game.pending_question:
+        return JsonResponse({"detail": "Answer the question first."}, status=400)
 
     try:
         player = game.players.select_related("user").get(user=request.user)
@@ -367,6 +368,64 @@ def game_roll(request, game_id: int):
         "game_state": state,
     }
     return JsonResponse(payload)
+
+@login_required
+@require_POST
+@transaction.atomic
+def answer_question(request, game_id: int):
+    game = get_object_or_404(Game, id=game_id)
+
+    if game.status != Game.Status.ACTIVE:
+        return JsonResponse({"detail": "Game is not active."}, status=400)
+
+    try:
+        player = game.players.select_related("user").get(user=request.user)
+    except PlayerInGame.DoesNotExist:
+        return JsonResponse({"detail": "You are not a player in this game."}, status=403)
+
+    if game.current_player is None or game.current_player.id != player.id:
+        return JsonResponse({"detail": "It is not your turn."}, status=403)
+
+    pq = game.pending_question
+    if not pq:
+        return JsonResponse({"detail": "No pending question."}, status=400)
+
+    if pq.get("for_player_id") != player.id:
+        return JsonResponse({"detail": "Not your question."}, status=403)
+
+    try:
+        body = json.loads(request.body.decode("utf-8"))
+        choice_index = int(body.get("choice_index"))
+    except Exception:
+        return JsonResponse({"detail": "Invalid payload."}, status=400)
+
+    correct_index = int(pq.get("correct_index"))
+    is_correct = (choice_index == correct_index)
+
+    # Rewards:
+    # Correct: +1 coin, +1 hp
+    # Wrong: +1 hp
+    if is_correct:
+        player.coins += 1
+        player.hp += 1
+        player.save(update_fields=["coins", "hp"])
+    else:
+        player.hp += 1
+        player.save(update_fields=["hp"])
+
+    # Clear question and advance turn
+    game.pending_question = None
+    game.save(update_fields=["pending_question"])
+    game.advance_turn()
+
+    state = game.to_public_state(for_user=request.user)
+
+    return JsonResponse({
+        "action": "answer_question",
+        "result": {"correct": is_correct},
+        "game_state": state,
+    })
+
 @login_required
 def game_board(request, game_id: int):
     """

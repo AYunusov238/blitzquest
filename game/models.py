@@ -59,7 +59,7 @@ class Game(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-
+    pending_question = models.JSONField(null=True, blank=True)
     def __str__(self) -> str:
         return f"Game {self.code} ({self.get_status_display()})"
 
@@ -98,6 +98,21 @@ class Game(models.Model):
         players_list = list(players_qs)
 
         current = self.current_player
+
+        pending_payload = None
+        pending_for_player_id = None
+        pending_active = bool(self.pending_question)
+
+        if self.pending_question:
+            pending_for_player_id = self.pending_question.get("for_player_id")
+
+            # Only reveal the question content to the player who must answer
+            if me is not None and pending_for_player_id == me.id:
+                pending_payload = {
+                    "id": self.pending_question.get("id"),
+                    "prompt": self.pending_question.get("prompt"),
+                    "choices": self.pending_question.get("choices", []),
+                }
 
         me = None
         if for_user is not None and isinstance(for_user, UserModel):
@@ -152,6 +167,9 @@ class Game(models.Model):
             "players": players_payload,
             "tiles": tiles_payload,
             "you_player_id": me.id if me is not None else None,
+            "pending_question": pending_payload,
+            "pending_question_active": pending_active,
+            "pending_question_for_player_id": pending_for_player_id,
         }
 
         # ADD THIS (does not break existing consumers)
@@ -305,16 +323,17 @@ class Game(models.Model):
 
         # ---------- QUESTION ----------
         if t == BoardTile.TileType.QUESTION:
-            # For now: auto-reward, no UI question yet.
-            reward = value if value is not None else cfg.get("reward_coins", 2)
-            if reward == 0:
-                reward = 2
+            # Pause the game and ask via UI. Do not auto-reward.
+            if not self.pending_question:
+                from .questions import generate_math_question
 
-            player.coins += reward
-            effects["coins_delta"] = reward
-            effects["extra"]["auto_answered"] = True
+                self.pending_question = {
+                    **generate_math_question(),
+                    "for_player_id": player.id,
+                }
+                self.save(update_fields=["pending_question"])
 
-            player.save(update_fields=["coins"])
+            effects["extra"]["question_triggered"] = True
             return effects
 
         # ---------- WARP (single player move) ----------
@@ -556,7 +575,7 @@ class Game(models.Model):
         move_result = self.apply_basic_move(player, dice_value=dice)
 
         # If player did not win, go to next player's turn
-        if not move_result["won"]:
+        if not move_result["won"] and not self.pending_question:
             self.advance_turn()
 
         next_player = self.current_player

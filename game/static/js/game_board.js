@@ -20,6 +20,94 @@ function escapeHtml(str) {
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
 }
+function showQuestionModal(q) {
+    const modal = document.getElementById("questionModal");
+    const prompt = document.getElementById("qPrompt");
+    const choicesWrap = document.getElementById("qChoices");
+    const feedback = document.getElementById("qFeedback");
+
+    if (!modal || !prompt || !choicesWrap || !feedback) return;
+
+    prompt.textContent = q.prompt || "";
+    feedback.textContent = "";
+    choicesWrap.innerHTML = "";
+
+    const gameId = window.GAME_ID;
+
+    (q.choices || []).forEach((text, idx) => {
+        const btn = document.createElement("button");
+        btn.className = "qchoice-btn";
+        btn.type = "button";
+        btn.textContent = text;
+
+        btn.addEventListener("click", async () => {
+            // lock
+            Array.from(choicesWrap.querySelectorAll("button")).forEach(b => b.disabled = true);
+            feedback.textContent = "Submitting...";
+
+            try {
+                const resp = await fetch(`/games/${gameId}/answer_question/`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-Requested-With": "XMLHttpRequest",
+                        "X-CSRFToken": getCookie("csrftoken") || "",
+                    },
+                    body: JSON.stringify({ choice_index: idx }),
+                });
+
+                const data = await resp.json().catch(() => ({}));
+                if (!resp.ok) {
+                    feedback.textContent = (data && data.detail) ? data.detail : `Error: ${resp.status}`;
+                    Array.from(choicesWrap.querySelectorAll("button")).forEach(b => b.disabled = false);
+                    return;
+                }
+
+                const correct = data?.result?.correct;
+                feedback.textContent = correct ? "Correct: +1 coin, +1 HP" : "Wrong: +1 HP";
+
+                // refresh UI immediately
+                if (data.game_state) {
+                    updateBoardUI(data.game_state);
+                    updatePlayersUI(data.game_state);
+                    updateDiceUI(data.game_state);
+                    renderPlayerTokens(data.game_state);
+                    renderQuestionUI(data.game_state);
+                    renderQuestionUI(data);
+                } else {
+                    fetchGameState(gameId);
+                }
+            } catch (e) {
+                console.error(e);
+                feedback.textContent = "Network error.";
+                Array.from(choicesWrap.querySelectorAll("button")).forEach(b => b.disabled = false);
+            }
+        });
+
+        choicesWrap.appendChild(btn);
+    });
+
+    modal.classList.remove("is-hidden");
+    modal.setAttribute("aria-hidden", "false");
+}
+
+function hideQuestionModal() {
+    const modal = document.getElementById("questionModal");
+    if (!modal) return;
+    modal.classList.add("is-hidden");
+    modal.setAttribute("aria-hidden", "true");
+}
+
+function renderQuestionUI(state) {
+    if (!state) return;
+
+    // show only if server included the question for *you*
+    if (state.pending_question) {
+        showQuestionModal(state.pending_question);
+    } else {
+        hideQuestionModal();
+    }
+}
 
 // ---------- UI: board ----------
 // Tiles are rendered strictly in ascending position order (0..49),
@@ -326,6 +414,7 @@ async function handleRollClick(e) {
             updatePlayersUI(state);
             updateDiceUI(state);
             renderPlayerTokens(state);
+            renderQuestionUI(state);
         }
     } catch (e) {
         console.error("roll error:", e);
