@@ -56,7 +56,8 @@ class Game(models.Model):
         blank=True,
         related_name="won_games",
     )
-
+    
+    enabled_tiles = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     pending_question = models.JSONField(null=True, blank=True)
@@ -99,6 +100,15 @@ class Game(models.Model):
 
         current = self.current_player
 
+        # Determine `me` (PlayerInGame for the requesting user) early so
+        # pending question reveal logic can reference it safely.
+        me = None
+        if for_user is not None and isinstance(for_user, UserModel):
+            for p in players_list:
+                if p.user_id == for_user.id:
+                    me = p
+                    break
+
         pending_payload = None
         pending_for_player_id = None
         pending_active = bool(self.pending_question)
@@ -113,13 +123,6 @@ class Game(models.Model):
                     "prompt": self.pending_question.get("prompt"),
                     "choices": self.pending_question.get("choices", []),
                 }
-
-        me = None
-        if for_user is not None and isinstance(for_user, UserModel):
-            for p in players_list:
-                if p.user_id == for_user.id:
-                    me = p
-                    break
 
         players_payload = []
         for p in players_list:
@@ -626,7 +629,7 @@ class Game(models.Model):
         middle_positions = range(1, length - 1)
 
         # Pool of types for middle tiles
-        tile_type_pool = [
+        default_pool = [
             TT.EMPTY,
             TT.TRAP,
             TT.HEAL,
@@ -637,19 +640,25 @@ class Game(models.Model):
             TT.DUEL,
             TT.SHOP,
         ]
+        selected = [
+            t for t in (self.enabled_tiles or [])
+            if t not in (TT.START, TT.FINISH) and t in dict(TT.choices)
+        ]
+        tile_type_pool = selected or default_pool
 
         # Weights: how often each type should appear (tweak freely)
-        tile_type_weights = [
-            6,  # EMPTY      (most common)
-            3,  # TRAP
-            3,  # HEAL
-            3,  # BONUS
-            2,  # QUESTION
-            1,  # WARP       (rare)
-            1,  # MASS_WARP  (rare)
-            1,  # DUEL       (rare)
-            1,  # SHOP       (rare)
-        ]
+        default_weights = {
+            TT.EMPTY: 6,
+            TT.TRAP: 3,
+            TT.HEAL: 3,
+            TT.BONUS: 3,
+            TT.QUESTION: 2,
+            TT.WARP: 1,
+            TT.MASS_WARP: 1,
+            TT.DUEL: 1,
+            TT.SHOP: 1,
+        }
+        tile_type_weights = [default_weights.get(t, 1) for t in tile_type_pool]
 
         for pos in middle_positions:
             t = random.choices(tile_type_pool, weights=tile_type_weights, k=1)[0]

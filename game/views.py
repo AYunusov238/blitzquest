@@ -39,14 +39,28 @@ def generate_game_code(length: int = 6) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
-def create_default_board_for_game(game: Game):
+import random
+from .models import BoardTile, Game
+
+
+import random
+
+def create_default_board_for_game(game: Game, enabled_tiles=None):
     """
-    Create a simple default board:
+    Create a board:
     - position 0: START
     - last tile: FINISH
-    - some tiles as HEAL/TRAP/DUEL/QUESTION for testing.
-    You can adjust this later to match your PPT design exactly.
+    - middle tiles: chosen only from enabled_tiles
     """
+    enabled_tiles = enabled_tiles if enabled_tiles is not None else (game.enabled_tiles or [])
+
+    # Defensive fallback: if still empty, enable everything except start/finish/empty
+    if not enabled_tiles:
+        enabled_tiles = [
+            value for (value, _label) in BoardTile.TileType.choices
+            if value not in (BoardTile.TileType.START, BoardTile.TileType.FINISH, BoardTile.TileType.EMPTY)
+        ]
+
     tiles = []
     last_index = game.board_length - 1
 
@@ -56,15 +70,7 @@ def create_default_board_for_game(game: Game):
         elif pos == last_index:
             tile_type = BoardTile.TileType.FINISH
         else:
-            # Simple pattern: every 5th = HEAL, 7th = TRAP, 9th = DUEL, others = QUESTION
-            if pos % 9 == 0:
-                tile_type = BoardTile.TileType.DUEL
-            elif pos % 7 == 0:
-                tile_type = BoardTile.TileType.TRAP
-            elif pos % 5 == 0:
-                tile_type = BoardTile.TileType.HEAL
-            else:
-                tile_type = BoardTile.TileType.QUESTION
+            tile_type = random.choice(enabled_tiles)
 
         tiles.append(BoardTile(game=game, position=pos, tile_type=tile_type))
 
@@ -93,7 +99,6 @@ def game_list(request):
     }
     return render(request, "game_list.html", context)
 
-
 @login_required
 def game_create(request):
     """
@@ -104,22 +109,22 @@ def game_create(request):
         if form.is_valid():
             game: Game = form.save(commit=False)
 
+            # Save enabled tiles onto the game BEFORE saving
+            game.enabled_tiles = form.cleaned_data.get("enabled_tiles") or []
+
             # Generate a unique code
-            code = None
             while True:
                 candidate = generate_game_code()
                 if not Game.objects.filter(code=candidate).exists():
-                    code = candidate
+                    game.code = candidate
                     break
 
-            game.code = code
             game.host = request.user
             game.save()
 
-            # Create basic board tiles
-            create_default_board_for_game(game)
+            # Create board tiles using only the chosen tile types
+            create_default_board_for_game(game, enabled_tiles=game.enabled_tiles)
 
-            # Create first player in game (host)
             PlayerInGame.objects.create(
                 game=game,
                 user=request.user,
@@ -132,10 +137,13 @@ def game_create(request):
 
             messages.success(request, f"Game created with code {game.code}. Share this with your friends.")
             return redirect("game:game_detail", game_id=game.id)
+
     else:
         form = GameCreateForm()
 
     return render(request, "game_create.html", {"form": form})
+
+
 
 
 @login_required
