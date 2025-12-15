@@ -58,7 +58,7 @@ def create_default_board_for_game(game: Game, enabled_tiles=None):
     if not enabled_tiles:
         enabled_tiles = [
             value for (value, _label) in BoardTile.TileType.choices
-            if value not in (BoardTile.TileType.START, BoardTile.TileType.FINISH, BoardTile.TileType.EMPTY)
+            if value not in (BoardTile.TileType.START, BoardTile.TileType.FINISH, BoardTile.TileType.SAFE)
         ]
 
     tiles = []

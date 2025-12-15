@@ -278,8 +278,8 @@ class Game(models.Model):
         # Current baseline
         start_pos = player.position
 
-        # ---------- EMPTY ----------
-        if t == BoardTile.TileType.EMPTY or t == BoardTile.TileType.START:
+        # ---------- SAFE ----------
+        if t == BoardTile.TileType.SAFE or t == BoardTile.TileType.START:
             # No effect
             return effects
 
@@ -613,7 +613,7 @@ class Game(models.Model):
         self.tiles.all().delete()
 
         TileModel = self.tiles.model
-        TT = TileModel.TileType
+        TT = BoardTile.TileType
 
         # 1) START tile at position 0
         TileModel.objects.create(
@@ -630,7 +630,7 @@ class Game(models.Model):
 
         # Pool of types for middle tiles
         default_pool = [
-            TT.EMPTY,
+            TT.SAFE,
             TT.TRAP,
             TT.HEAL,
             TT.BONUS,
@@ -644,11 +644,14 @@ class Game(models.Model):
             t for t in (self.enabled_tiles or [])
             if t not in (TT.START, TT.FINISH) and t in dict(TT.choices)
         ]
+        if TT.SAFE not in selected:
+            selected.append(TT.SAFE)
+        
         tile_type_pool = selected or default_pool
 
         # Weights: how often each type should appear (tweak freely)
         default_weights = {
-            TT.EMPTY: 6,
+            TT.SAFE: 0,
             TT.TRAP: 3,
             TT.HEAL: 3,
             TT.BONUS: 3,
@@ -667,7 +670,7 @@ class Game(models.Model):
             value_int = None
             config = {}
 
-            if t == TT.EMPTY:
+            if t == TT.SAFE:
                 label = ""
                 # no effect
             elif t == TT.TRAP:
@@ -800,7 +803,7 @@ class BoardTile(models.Model):
         DUEL = "duel", "Duel"                 # challenge another player
         SHOP = "shop", "Shop"                 # buy item (future expansion)
 
-        EMPTY = "empty", "Empty"
+        SAFE = "safe", "Safe"                     # no effect (alternative to EMPTY)
 
     game = models.ForeignKey(
         Game,
@@ -815,7 +818,7 @@ class BoardTile(models.Model):
     tile_type = models.CharField(
         max_length=32,
         choices=TileType.choices,
-        default=TileType.EMPTY,
+        default=TileType.SAFE,
     )
 
     # Optional readable label (useful for board UI)
