@@ -1,6 +1,6 @@
 import random
 
-from django.db import models
+from django.db import models, transaction
 from django.contrib.auth import get_user_model
 from django.db.models import Max
 
@@ -263,7 +263,7 @@ class Game(models.Model):
             "landed_tile_type": landed_tile.tile_type if landed_tile else None,
             "tile_effect": tile_effect,
         }
-    def execute_tile_effect(self, player, tile):
+    def execute_tile_effect(self, player, tile, *, ctx=None):
         """
         Apply the effect of `tile` to `player` (and sometimes other players).
         Uses:
@@ -276,7 +276,9 @@ class Game(models.Model):
         t = tile.tile_type
         value = tile.value_int
         cfg = tile.config or {}
-
+        if ctx is None:
+            ctx = {}
+            
         effects = {
             "tile_type": t,
             "tile_label": tile.label,
@@ -400,49 +402,81 @@ class Game(models.Model):
 
         # ---------- MASS_WARP (all players move) ----------
         if t == BoardTile.TileType.MASS_WARP:
-            import random as _r
+            # Prevent MASS_WARP from chaining into another MASS_WARP in the same resolution
+            if ctx.get("mass_warp_fired"):
+                effects["extra"]["mass_warp"] = {"skipped": True, "reason": "mass_warp_already_fired"}
+                effects["position_delta"] = 0
+                effects["position_set"] = player.position
+                return effects
+
+            ctx["mass_warp_fired"] = True
 
             alive_players = list(self.players.filter(is_alive=True).order_by("id"))
+            if len(alive_players) < 2:
+                effects["extra"]["mass_warp"] = {"moved": [], "note": "Not enough alive players to swap."}
+                effects["position_delta"] = 0
+                effects["position_set"] = player.position
+                return effects
 
-            # Board size: prefer config; otherwise infer from tiles
-            board_size = int(effects["extra"].get("board_size") or 0)
-            if not board_size:
-                # If you have a BoardTile model related to game/board, adjust this query accordingly
-                board_size = self.tiles.count() if hasattr(self, "tiles") else 50
+            old_positions = [p.position for p in alive_players]
+            new_positions = old_positions[:]
+            for _ in range(10):
+                random.shuffle(new_positions)
+                if any(a != b for a, b in zip(old_positions, new_positions)):
+                    break
 
             moved = []
+            with transaction.atomic():
+                for p, old_pos, new_pos in zip(alive_players, old_positions, new_positions):
+                    p.position = new_pos
+                    moved.append({"player_id": p.id, "from": old_pos, "to": new_pos, "delta": new_pos - old_pos})
+                type(alive_players[0]).objects.bulk_update(alive_players, ["position"])
 
-            for p in alive_players:
-                start = p.position
+            # --- RETRIGGER: resolve the tile each moved player landed on ---
+            # Use a queue so we can safely handle chain effects
+            retriggered = []
+            queue = alive_players[:]  # each moved player triggers where they landed
 
-                distance = _r.randint(1, 3)         # 1..3
-                direction = _r.choice([-1, 1])      # back or forward
-                delta = direction * distance
+            # optional: hard safety limit against crazy chains
+            max_triggers = ctx.get("max_triggers", 50)
+            triggers_used = 0
 
-                new_pos = (start + delta) % board_size
+            while queue and triggers_used < max_triggers:
+                p = queue.pop(0)
+                landed_tile = self.board.tiles.filter(index=p.position).first()
+                if not landed_tile:
+                    continue
 
-                p.position = new_pos
-                p.save(update_fields=["position"])
+                # Block MASS_WARP from retriggering (prevents mass-warp twice / infinite loops)
+                if landed_tile.tile_type == BoardTile.TileType.MASS_WARP:
+                    retriggered.append({"player_id": p.id, "tile": "MASS_WARP", "skipped": True})
+                    continue
 
-                moved.append({
+                triggers_used += 1
+                # Important: pass the SAME ctx so the "mass_warp_fired" flag stays effective
+                sub = self.execute_tile_effect(p, landed_tile, ctx=ctx)
+
+                retriggered.append({
                     "player_id": p.id,
-                    "from": start,
-                    "to": new_pos,
-                    "delta": delta,
-                    "distance": distance,
-                    "direction": "forward" if direction == 1 else "back",
+                    "tile": landed_tile.tile_type,
+                    "effects": sub.get("extra", sub),
                 })
 
-            # Tell frontend what happened
-            effects["extra"]["mass_warp"] = {
-                "range": [1, 3],
-                "moved": moved,
-            }
+                # If your other tiles can move the player (WARP etc) and you want *that* new landing
+                # to also trigger, push them back into queue when their position changed:
+                if sub.get("position_set") is not None and sub["position_set"] != p.position:
+                    # note: p.position may already be updated inside execute_tile_effect depending on your code
+                    queue.append(p)
 
-            # Landing player itself is already included above; we don’t need a single position_delta here.
+            effects["extra"]["mass_warp"] = {
+                "mode": "shuffle_positions",
+                "moved": moved,
+                "retriggered": retriggered,
+                "triggers_used": triggers_used,
+                "max_triggers": max_triggers,
+            }
             effects["position_delta"] = 0
             effects["position_set"] = player.position
-
             return effects
 
         # ---------- DUEL ----------
