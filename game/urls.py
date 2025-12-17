@@ -28,6 +28,7 @@ urlpatterns = [
     path('games/<int:game_id>/board/', views.game_board, name='game_board'),
     # answer question
     path('games/<int:game_id>/answer_question/', views.answer_question, name='answer_question'),
-
+    # use card endpoint
+    path('games/<int:game_id>/use_card/', views.use_card, name='use_card'),
 ]
 

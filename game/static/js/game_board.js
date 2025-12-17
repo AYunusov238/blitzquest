@@ -73,7 +73,7 @@ function showQuestionModal(q) {
                     updateDiceUI(data.game_state);
                     renderPlayerTokens(data.game_state);
                     renderQuestionUI(data.game_state);
-                    renderQuestionUI(data);
+                    renderInventoryUI(data.game_state);
                 } else {
                     fetchGameState(gameId);
                 }
@@ -153,23 +153,29 @@ function updateBoardUI(state) {
         const hasCurrent = tPlayers.some(p => p.is_current_turn);
 
         let label = tile.label || "";
-        const type = tile.type || tile.tile_type || "empty";
+        const type = (tile.type || tile.tile_type || "empty").toLowerCase();
 
         if (!label) {
-             // ... (keep existing label switch case)
-            switch (type) {
-                case "start":     label = "Start"; break;
-                case "finish":    label = "Finish"; break;
-                case "trap":      label = "Trap"; break;
-                case "heal":      label = "Heal"; break;
-                case "bonus":     label = "Bonus"; break;
-                case "question":  label = "?"; break;
-                case "warp":      label = "Warp"; break;
-                case "mass_warp": label = "Mass Warp"; break;
-                case "duel":      label = "Duel"; break;
-                case "shop":      label = "Shop"; break;
-                default:          label = ""; break;
-            }
+        switch (type) {
+            case "start":     label = "Start"; break;
+            case "finish":    label = "Finish"; break;
+            case "trap":      label = "Trap"; break;
+            case "heal":      label = "Heal"; break;
+            case "bonus":     label = "Bonus"; break;
+            case "question":  label = "?"; break;
+            case "warp":      label = "Warp"; break;
+            case "mass_warp": label = "Mass Warp"; break;
+            case "duel":      label = "Duel"; break;
+            case "shop":      label = "Shop"; break;
+            default:          label = ""; break;
+        }
+        }
+
+        /* --- BONUS TILE HTML (🎁 + corner badge) --- */
+        let labelHtml = escapeHtml(label);
+
+        if (type === "bonus") {
+            labelHtml = `<div class="board-tile-symbol">🎁</div>`;
         }
 
         // ... (keep rest of tile map logic)
@@ -179,7 +185,7 @@ function updateBoardUI(state) {
         return `
             <div class="${tileClasses.join(" ")}" data-position="${pos}">
                 <div class="board-tile-index">${pos + 1}</div>
-                <div class="board-tile-label">${escapeHtml(label)}</div>
+                <div class="board-tile-label">${labelHtml}</div>
                 <div class="board-tile-players"></div>
                 <div class="tile-tokens"></div>
             </div>
@@ -306,6 +312,109 @@ function updateDiceUI(state) {
     }
 }
 
+
+// ---------- Support Cards (inventory) ----------
+
+async function useCard(gameId, cardId, targetPlayerId = null) {
+  const payload = { card_id: cardId };
+  if (targetPlayerId !== null) payload.target_player_id = targetPlayerId;
+
+  const resp = await fetch(`/games/${gameId}/use_card/`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Requested-With": "XMLHttpRequest",
+      "X-CSRFToken": getCookie("csrftoken") || "",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    alert(data.detail || `Error ${resp.status}`);
+    return;
+  }
+
+  const state = data.game_state || data;
+
+  updateBoardUI(state);
+  updatePlayersUI(state);
+  updateDiceUI(state);
+  renderPlayerTokens(state);
+  renderQuestionUI(state);
+  renderInventoryUI(state);
+}
+
+function renderInventoryUI(state) {
+  const wrap = document.getElementById("inventory-cards");
+  if (!wrap) return;
+
+  const shieldEl = document.getElementById("inv-shield");
+  const extraEl = document.getElementById("inv-extra-rolls");
+
+  if (shieldEl) shieldEl.textContent = state.you_shield_points ?? 0;
+  if (extraEl) extraEl.textContent = state.you_extra_rolls ?? 0;
+
+  const cards = Array.isArray(state.your_cards) ? state.your_cards : [];
+
+  if (cards.length === 0) {
+    wrap.innerHTML = `<div class="muted">No cards</div>`;
+    return;
+  }
+
+  wrap.innerHTML = cards
+    .map(
+      (c) => `
+      <div class="inv-card">
+        <div class="inv-card-title">${escapeHtml(c.name)}</div>
+        <div class="inv-card-desc">${escapeHtml(c.description || "")}</div>
+        <button class="btn btn-sm btn-primary inv-use-btn"
+                data-card-id="${c.id}"
+                data-effect="${escapeHtml(c.effect_type || "")}">
+          Use
+        </button>
+      </div>
+    `
+    )
+    .join("");
+
+  wrap.querySelectorAll(".inv-use-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const cardId = btn.getAttribute("data-card-id");
+      const effect = btn.getAttribute("data-effect");
+      const gameId = window.GAME_ID;
+
+      // swap_position needs target player (adjacent)
+      if (effect === "swap_position") {
+        const players = Array.isArray(state.players) ? state.players : [];
+        const me = players.find((p) => p.is_you);
+        if (!me) {
+          alert("Could not identify your player.");
+          return;
+        }
+
+        const adjacent = players.filter(
+          (p) =>
+            !p.is_you &&
+            p.is_alive &&
+            (p.position === me.position - 1 || p.position === me.position + 1)
+        );
+
+        if (adjacent.length === 0) {
+          alert("No adjacent player to swap with.");
+          return;
+        }
+
+        // simplest: swap with first adjacent
+        useCard(gameId, cardId, adjacent[0].id);
+        return;
+      }
+
+      useCard(gameId, cardId);
+    });
+  });
+}
+
 // ---------- fetch state ----------
 
 async function fetchGameState(gameId) {
@@ -321,6 +430,7 @@ async function fetchGameState(gameId) {
         updatePlayersUI(data);
         updateDiceUI(data);
         renderPlayerTokens(data);
+        renderInventoryUI(data);
 
         // NEW: if game finished -> show congrats popup + stop polling
         if (data && (data.status === "finished" || data.has_winner === true)) {
@@ -415,6 +525,7 @@ async function handleRollClick(e) {
             updateDiceUI(state);
             renderPlayerTokens(state);
             renderQuestionUI(state);
+            renderInventoryUI(state);
         }
     } catch (e) {
         console.error("roll error:", e);
@@ -576,12 +687,3 @@ function bqOpenFinishModal(state) {
   });
 }
 
-// minimal XSS-safe output for usernames
-function escapeHtml(str) {
-  return String(str)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}

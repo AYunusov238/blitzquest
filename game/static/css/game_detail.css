@@ -66,54 +66,8 @@
     justify-content: flex-end;
 }
 
-/* Badges */
 
-.badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 999px;
-    font-size: 0.78rem;
-    padding: 0.2rem 0.7rem;
-    border: 1px solid transparent;
-}
-
-.badge-status {
-    text-transform: uppercase;
-    letter-spacing: 0.09em;
-    font-weight: 600;
-}
-
-/* Status colors */
-.badge-waiting {
-    background: rgba(234, 179, 8, 0.18);
-    border-color: rgba(234, 179, 8, 0.55);
-    color: #facc15;
-}
-
-.badge-active {
-    background: rgba(34, 197, 94, 0.18);
-    border-color: rgba(34, 197, 94, 0.55);
-    color: #4ade80;
-}
-
-.badge-finished {
-    background: rgba(248, 113, 113, 0.16);
-    border-color: rgba(248, 113, 113, 0.55);
-    color: #fecaca;
-}
-
-.badge-soft {
-    background: rgba(148, 163, 184, 0.1);
-    border-color: rgba(148, 163, 184, 0.45);
-    color: #e5e7eb;
-}
-
-.badge-soft-danger {
-    background: rgba(248, 113, 113, 0.14);
-    border-color: rgba(248, 113, 113, 0.55);
-    color: #fecaca;
-}
+/* Badges moved to main.css (global) */
 
 /* Header bottom */
 
@@ -609,4 +563,66 @@
     border-radius: 4px;
     display: inline-block;
     box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.8);
+}
+/* ===== BONUS TILE DESIGN ===== */
+.tile.bonus {
+  position: relative;
+  border: 2px solid rgba(255, 215, 0, 0.9);
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.20), rgba(255, 165, 0, 0.12));
+  box-shadow: 0 6px 16px rgba(255, 165, 0, 0.18);
+  overflow: hidden;
+}
+
+.tile.bonus::before {
+  content: "";
+  position: absolute;
+  inset: -40%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.35), transparent 55%);
+  transform: rotate(25deg);
+  pointer-events: none;
+}
+
+.tile .bonus-wrap {
+  height: 100%;
+  width: 100%;
+  display: grid;
+  place-items: center;
+  gap: 6px;
+  text-align: center;
+  z-index: 1;
+  position: relative;
+}
+
+.tile .bonus-icon {
+  font-size: 28px;
+  line-height: 1;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.25));
+}
+
+.tile .bonus-title {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  opacity: 0.95;
+}
+
+.tile .bonus-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(0,0,0,0.60);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.25);
+  backdrop-filter: blur(4px);
+  z-index: 2;
+}
+
+.tile .bonus-badge .coin {
+  margin-left: 4px;
+  opacity: 0.95;
 }

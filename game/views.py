@@ -1,6 +1,7 @@
 import secrets
 import string
 import json
+import random
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -12,8 +13,7 @@ from django.views.decorators.http import require_GET
 from django.views.decorators.http import require_POST
 from django.db import transaction
 
-
-from .models import Game, PlayerInGame, BoardTile
+from .models import Game, PlayerInGame, BoardTile, SupportCardInstance, SupportCardType
 from .forms import GameCreateForm, JoinGameForm
 
 def signup(request):
@@ -39,11 +39,8 @@ def generate_game_code(length: int = 6) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
-import random
-from .models import BoardTile, Game
 
 
-import random
 
 def create_default_board_for_game(game: Game, enabled_tiles=None):
     """
@@ -186,6 +183,7 @@ def game_join(request):
                 coins=0,
                 position=0,
                 is_alive=True,
+                shield_points=0,
             )
 
             messages.success(request, f"You joined game {game.code}.")
@@ -234,6 +232,83 @@ def game_detail(request, game_id: int):
     }
     return render(request, "game_detail.html", context)
 
+def seed_support_cards():
+    SupportCardType.objects.get_or_create(
+        code="move_extra",
+        defaults=dict(
+            name="Move extra cells",
+            description="Move 1–3 extra cells.",
+            effect_type=SupportCardType.EffectType.MOVE_EXTRA,
+            params={},
+            is_active=True,
+        ),
+    )
+
+    SupportCardType.objects.get_or_create(
+        code="heal",
+        defaults=dict(
+            name="Heal HP",
+            description="Heal 2 HP (max 3).",
+            effect_type=SupportCardType.EffectType.HEAL,
+            params={},
+            is_active=True,
+        ),
+    )
+
+    SupportCardType.objects.get_or_create(
+        code="shield",
+        defaults=dict(
+            name="Damage shield",
+            description="Activate shield that blocks 2 damage.",
+            effect_type=SupportCardType.EffectType.SHIELD,
+            params={},
+            is_active=True,
+        ),
+    )
+
+    SupportCardType.objects.get_or_create(
+        code="reroll",
+        defaults=dict(
+            name="Reroll dice",
+            description="Gain 1 extra roll (keeps your turn).",
+            effect_type=SupportCardType.EffectType.REROLL,
+            params={},
+            is_active=True,
+        ),
+    )
+
+    SupportCardType.objects.get_or_create(
+        code="swap_position",
+        defaults=dict(
+            name="Swap position",
+            description="Swap with an adjacent player.",
+            effect_type=SupportCardType.EffectType.SWAP_POSITION,
+            params={},
+            is_active=True,
+        ),
+    )
+
+    SupportCardType.objects.get_or_create(
+        code="change_question",
+        defaults=dict(
+            name="Change question",
+            description="Change the current question once.",
+            effect_type=SupportCardType.EffectType.CHANGE_QUESTION,
+            params={},
+            is_active=True,
+        ),
+    )
+
+    SupportCardType.objects.get_or_create(
+        code="bonus_coin",
+        defaults=dict(
+            name="Bonus coin",
+            description="Get 1–3 coins.",
+            effect_type=SupportCardType.EffectType.BONUS_COIN,
+            params={},
+            is_active=True,
+        ),
+    )
 
 @login_required
 def game_start(request, game_id: int):
@@ -251,6 +326,7 @@ def game_start(request, game_id: int):
         messages.error(request, "Need at least 2 players to start the game.")
         return redirect("game:game_detail", game_id=game.id)
 
+    seed_support_cards()
     # 1) generate a fresh random board
     game.generate_random_board()
 
@@ -474,3 +550,105 @@ def game_board(request, game_id: int):
         "tiles": tiles_qs,                    # for template loops (e.g. 40 tiles)
     }
     return render(request, "game_board.html", context)
+
+@login_required
+@require_POST
+def use_card(request, game_id):
+    try:
+        body = json.loads(request.body.decode("utf-8") or "{}")
+    except Exception:
+        body = {}
+
+    card_id = body.get("card_id")
+    target_player_id = body.get("target_player_id")
+
+    if not card_id:
+        return JsonResponse({"detail": "card_id is required."}, status=400)
+
+    game = Game.objects.select_related().get(id=game_id)
+
+    # Find "me"
+    me = game.players.select_related("user").filter(user=request.user).first()
+    if not me:
+        return JsonResponse({"detail": "You are not in this game."}, status=403)
+
+    # Validate card ownership
+    card = SupportCardInstance.objects.select_related("card_type", "owner").filter(
+        id=card_id, owner=me, is_used=False
+    ).first()
+    if not card:
+        return JsonResponse({"detail": "Card not found (or already used)."}, status=404)
+
+    ctype = card.card_type
+    et = ctype.effect_type
+    params = ctype.params or {}
+
+    # Apply effect
+    if et == "move_extra":
+        steps = random.randint(1, 3)
+        game.apply_basic_move(me, dice_value=steps)
+
+    elif et == "heal":
+        me.hp = min(3, me.hp + 2)
+        me.save(update_fields=["hp"])
+
+    elif et == "shield":
+        me.shield_points = me.shield_points + 2
+        me.save(update_fields=["shield_points"])
+
+    elif et == "reroll":
+        me.extra_rolls = getattr(me, "extra_rolls", 0) + 1
+        me.save(update_fields=["extra_rolls"])
+
+    elif et == "swap_position":
+        if not target_player_id:
+            return JsonResponse({"detail": "target_player_id is required for swap."}, status=400)
+
+        target = game.players.filter(id=target_player_id, is_alive=True).first()
+        if not target:
+            return JsonResponse({"detail": "Target player not found."}, status=404)
+
+        # must be adjacent
+        if abs(target.position - me.position) != 1:
+            return JsonResponse({"detail": "Target player must be adjacent."}, status=400)
+
+        me_pos = me.position
+        me.position = target.position
+        target.position = me_pos
+        me.save(update_fields=["position"])
+        target.save(update_fields=["position"])
+
+    elif et == "change_question":
+        if not game.pending_question:
+            return JsonResponse({"detail": "No active question to change."}, status=400)
+
+        if game.pending_question.get("for_player_id") != me.id:
+            return JsonResponse({"detail": "Not your question."}, status=403)
+
+        if game.pending_question.get("changed_once"):
+            return JsonResponse({"detail": "You already changed this question once."}, status=400)
+
+        from .questions import generate_math_question
+
+        new_q = generate_math_question()
+        game.pending_question = {
+            **new_q,
+            "for_player_id": me.id,
+            "changed_once": True,
+        }
+        game.save(update_fields=["pending_question"])
+
+    elif et == "bonus_coin":
+        coins = random.randint(1, 3)
+        me.coins += coins
+        me.save(update_fields=["coins"])
+
+    else:
+        return JsonResponse({"detail": f"Unsupported card effect: {et}"}, status=400)
+
+    # mark used
+    card.is_used = True
+    card.save(update_fields=["is_used"])
+
+    # return updated state
+    return JsonResponse({"game_state": game.to_public_state(for_user=request.user)})

@@ -174,6 +174,23 @@ class Game(models.Model):
             "pending_question_active": pending_active,
             "pending_question_for_player_id": pending_for_player_id,
         }
+                # --- Support cards inventory ---
+        if me is not None:
+            payload["your_cards"] = [
+                {
+                    "id": c.id,
+                    "name": c.card_type.name,
+                    "code": c.card_type.code,
+                    "description": c.card_type.description,
+                    "effect_type": c.card_type.effect_type,
+                    "params": c.card_type.params or {},
+                    "is_used": c.is_used,
+                }
+                for c in me.cards.select_related("card_type").all()
+                if not c.is_used
+            ]
+            payload["you_shield_points"] = getattr(me, "shield_points", 0)
+            payload["you_extra_rolls"] = getattr(me, "extra_rolls", 0)
 
         # ADD THIS (does not break existing consumers)
         if self.status == "finished" or self.winner_id is not None:
@@ -312,17 +329,28 @@ class Game(models.Model):
             player.save(update_fields=["hp"])
             return effects
 
-        # ---------- BONUS (coins +) ----------
+        # ---------- BONUS ----------
         if t == BoardTile.TileType.BONUS:
-            coins_delta = value if value is not None else cfg.get("coins_delta", 1)
-            if coins_delta == 0:
-                coins_delta = 1
+        # Bonus tile now grants a random support card (inventory item).
+            # ensure_default_support_cards()
 
-            player.coins += coins_delta
-            effects["coins_delta"] = coins_delta
+            active_types = list(SupportCardType.objects.filter(is_active=True))
+            if not active_types:
+                effects["extra"]["no_cards_available"] = True
+                return effects
 
-            player.save(update_fields=["coins"])
+            import random as _r
+            card_type = _r.choice(active_types)
+            SupportCardInstance.objects.create(card_type=card_type, owner=player)
+
+            effects["extra"]["granted_card"] = {
+                "name": card_type.name,
+                "code": card_type.code,
+                "effect_type": card_type.effect_type,
+                "params": card_type.params or {},
+            }
             return effects
+
 
         # ---------- QUESTION ----------
         if t == BoardTile.TileType.QUESTION:
@@ -579,7 +607,13 @@ class Game(models.Model):
 
         # If player did not win, go to next player's turn
         if not move_result["won"] and not self.pending_question:
-            self.advance_turn()
+            if getattr(player, "extra_rolls", 0) > 0:
+                # consume reroll card effect
+                player.extra_rolls -= 1
+                player.save(update_fields=["extra_rolls"])
+                # do NOT advance turn → player rolls again
+            else:
+                self.advance_turn()
 
         next_player = self.current_player
 
@@ -773,6 +807,15 @@ class PlayerInGame(models.Model):
     coins = models.PositiveIntegerField(default=0)
     position = models.PositiveSmallIntegerField(default=0)
 
+    shield_points = models.PositiveSmallIntegerField(
+        default=0,
+        help_text="Blocks incoming damage (negative HP deltas) until depleted.",
+    )
+    extra_rolls = models.PositiveSmallIntegerField(
+        default=0,
+        help_text="Extra dice rolls available (from Reroll Dice card).",
+    )
+
     is_alive = models.BooleanField(default=True)
     eliminated_at = models.DateTimeField(null=True, blank=True)
 
@@ -910,6 +953,7 @@ class SupportCardType(models.Model):
         SWAP_POSITION = "swap_position", "Swap position with another player"
         CHANGE_QUESTION = "change_question", "Change question"
         CUSTOM = "custom", "Custom effect"
+        BONUS_COIN = "bonus_coin", "Bonus coin"
 
     name = models.CharField(max_length=64)
     code = models.SlugField(
