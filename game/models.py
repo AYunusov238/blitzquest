@@ -278,7 +278,7 @@ class Game(models.Model):
         cfg = tile.config or {}
         if ctx is None:
             ctx = {}
-            
+
         effects = {
             "tile_type": t,
             "tile_label": tile.label,
@@ -307,16 +307,11 @@ class Game(models.Model):
             hp_delta = value if value is not None else cfg.get("hp_delta", -1)
             if hp_delta == 0:
                 hp_delta = -1
+            if hp_delta > 0:
+                hp_delta = -hp_delta  # ensure trap is damage
 
-            player.hp += hp_delta
-            effects["hp_delta"] = hp_delta
-
-            if player.hp <= 0:
-                player.hp = 0
-                player.is_alive = False
-                effects["extra"]["died"] = True
-
-            player.save(update_fields=["hp", "is_alive"])
+            damage = abs(int(hp_delta))
+            self.apply_damage(player, damage, effects, source="trap")
             return effects
 
         # ---------- HEAL (HP +) ----------
@@ -443,7 +438,7 @@ class Game(models.Model):
 
             while queue and triggers_used < max_triggers:
                 p = queue.pop(0)
-                landed_tile = self.board.tiles.filter(index=p.position).first()
+                landed_tile = self.tiles.filter(position=p.position).first()
                 if not landed_tile:
                     continue
 
@@ -482,48 +477,46 @@ class Game(models.Model):
         # ---------- DUEL ----------
         if t == BoardTile.TileType.DUEL:
             # Simple logic: 50/50 win-lose against a random other alive player
-            other_players = list(
-                self.players.filter(is_alive=True).exclude(id=player.id)
-            )
+            other_players = list(self.players.filter(is_alive=True).exclude(id=player.id))
             if not other_players:
-                # nobody to duel
+                effects.setdefault("extra", {})
                 effects["extra"]["no_opponent"] = True
                 return effects
 
             import random as _r
             opponent = _r.choice(other_players)
 
-            reward_coins = cfg.get("reward_coins", 2)
-            penalty_hp = cfg.get("penalty_hp", 1)
+            cfg = cfg or {}
+            reward_coins = int(cfg.get("reward_coins", 2) or 2)
+            penalty_hp = int(cfg.get("penalty_hp", 1) or 1)
+            if penalty_hp < 0:
+                penalty_hp = abs(penalty_hp)
 
+            effects.setdefault("extra", {})
             win = _r.choice([True, False])
             effects["extra"]["opponent_id"] = opponent.id
             effects["extra"]["won_duel"] = win
 
             if win:
-                # player gains coins, opponent loses some HP
-                player.coins += reward_coins
-                opponent.hp -= penalty_hp
+                # player gains coins
+                player.coins = int(player.coins or 0) + reward_coins
+                player.save(update_fields=["coins"])
+                effects["coins_delta"] = effects.get("coins_delta", 0) + reward_coins
 
-                effects["coins_delta"] = reward_coins
-                if opponent.hp <= 0:
-                    opponent.hp = 0
-                    opponent.is_alive = False
+                # opponent takes damage (shield applies)
+                dmg_result = self.apply_damage(opponent, penalty_hp, effects, source="duel")
+
+                # keep old payload field name for frontend compatibility
+                if dmg_result.get("died"):
                     effects["extra"]["opponent_died"] = True
 
-                player.save(update_fields=["coins"])
-                opponent.save(update_fields=["hp", "is_alive"])
             else:
-                # player loses HP
-                player.hp -= penalty_hp
-                effects["hp_delta"] = -penalty_hp
+                # player takes damage (shield applies)
+                dmg_result = self.apply_damage(player, penalty_hp, effects, source="duel")
 
-                if player.hp <= 0:
-                    player.hp = 0
-                    player.is_alive = False
+                # keep old payload field name for frontend compatibility
+                if dmg_result.get("died"):
                     effects["extra"]["died"] = True
-
-                player.save(update_fields=["hp", "is_alive"])
 
             return effects
 
@@ -554,6 +547,44 @@ class Game(models.Model):
 
         # Fallback: no effect
         return effects
+
+    def apply_damage(self, player, damage: int, effects: dict | None = None, *, source: str | None = None):
+        """Apply incoming damage, consuming shield_points first."""
+        dmg = max(0, int(damage or 0))
+        if dmg == 0:
+            return {"blocked": 0, "taken": 0, "died": False}
+
+        shield = int(getattr(player, "shield_points", 0) or 0)
+        blocked = min(shield, dmg)
+        taken = dmg - blocked
+
+        update_fields = []
+
+        if blocked:
+            player.shield_points = shield - blocked
+            update_fields.append("shield_points")
+
+        if taken:
+            player.hp = max(0, int(player.hp) - taken)
+            update_fields.append("hp")
+            if player.hp == 0:
+                player.is_alive = False
+                update_fields.append("is_alive")
+
+        if update_fields:
+            player.save(update_fields=sorted(set(update_fields)))
+
+        if effects is not None:
+            effects["hp_delta"] = effects.get("hp_delta", 0) - taken
+            extra = effects.setdefault("extra", {})
+            if blocked:
+                extra["shield_blocked"] = extra.get("shield_blocked", 0) + blocked
+            if source:
+                extra["damage_source"] = source
+
+        return {"blocked": blocked, "taken": taken, "died": (taken > 0 and player.hp == 0)}
+
+
 
     def build_leaderboard(self):
         """

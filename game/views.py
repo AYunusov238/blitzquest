@@ -491,11 +491,9 @@ def answer_question(request, game_id: int):
     # Wrong: +1 hp
     if is_correct:
         player.coins += 1
-        player.hp += 1
-        player.save(update_fields=["coins", "hp"])
+        player.save(update_fields=["coins"])
     else:
-        player.hp += 1
-        player.save(update_fields=["hp"])
+        game.apply_damage(player, 1, effects=None, source="question")
 
     # Clear question and advance turn
     game.pending_question = None

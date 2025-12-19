@@ -16,8 +16,3 @@ The project is designed for collaborative development and easy local setup.
 - SQLite (default, for development)  
 
 ---
-<<<<<<< HEAD
-
-## Project Structure
-=======
->>>>>>> ec7472ad796349999fc45e0c85fa586a207df5ea
