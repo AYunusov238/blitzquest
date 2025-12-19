@@ -20,7 +20,7 @@ function escapeHtml(str) {
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
 }
-function showQuestionModal(q) {
+function showQuestionModal(q, state) {
     const modal = document.getElementById("questionModal");
     const prompt = document.getElementById("qPrompt");
     const choicesWrap = document.getElementById("qChoices");
@@ -34,6 +34,34 @@ function showQuestionModal(q) {
 
     const gameId = window.GAME_ID;
 
+    // Allow using Change Question card directly inside the modal
+    const cards = state && Array.isArray(state.your_cards) ? state.your_cards : [];
+    const canChange = q && !q.changed_once;
+    const changeCard = canChange ? cards.find(c => (c.effect_type || "") === "change_question") : null;
+
+    if (changeCard) {
+        const changeBtn = document.createElement("button");
+        changeBtn.className = "qchoice-btn qchoice-btn-secondary";
+        changeBtn.type = "button";
+        changeBtn.textContent = "Change question";
+
+        changeBtn.addEventListener("click", async () => {
+            Array.from(choicesWrap.querySelectorAll("button")).forEach(b => b.disabled = true);
+            feedback.textContent = "Changing question...";
+
+            try {
+                await useCard(gameId, changeCard.id);
+                Array.from(choicesWrap.querySelectorAll("button")).forEach(b => b.disabled = false);
+            } catch (e) {
+                console.error(e);
+                feedback.textContent = "Could not change question.";
+                Array.from(choicesWrap.querySelectorAll("button")).forEach(b => b.disabled = false);
+            }
+        });
+
+        choicesWrap.appendChild(changeBtn);
+    }
+
     (q.choices || []).forEach((text, idx) => {
         const btn = document.createElement("button");
         btn.className = "qchoice-btn";
@@ -41,7 +69,6 @@ function showQuestionModal(q) {
         btn.textContent = text;
 
         btn.addEventListener("click", async () => {
-            // lock
             Array.from(choicesWrap.querySelectorAll("button")).forEach(b => b.disabled = true);
             feedback.textContent = "Submitting...";
 
@@ -64,9 +91,8 @@ function showQuestionModal(q) {
                 }
 
                 const correct = data?.result?.correct;
-                feedback.textContent = correct ? "Correct: +1 coin, +1 HP" : "Wrong: +1 HP";
+                feedback.textContent = correct ? "Correct: +1 coin, +1 HP" : "Wrong: -1 HP";
 
-                // refresh UI immediately
                 if (data.game_state) {
                     updateBoardUI(data.game_state);
                     updatePlayersUI(data.game_state);
@@ -101,9 +127,8 @@ function hideQuestionModal() {
 function renderQuestionUI(state) {
     if (!state) return;
 
-    // show only if server included the question for *you*
     if (state.pending_question) {
-        showQuestionModal(state.pending_question);
+        showQuestionModal(state.pending_question, state);
     } else {
         hideQuestionModal();
     }

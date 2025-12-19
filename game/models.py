@@ -122,6 +122,7 @@ class Game(models.Model):
                     "id": self.pending_question.get("id"),
                     "prompt": self.pending_question.get("prompt"),
                     "choices": self.pending_question.get("choices", []),
+                    "changed_once": bool(self.pending_question.get("changed_once")),
                 }
 
         players_payload = []
