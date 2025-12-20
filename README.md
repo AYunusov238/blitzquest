@@ -1,4 +1,3 @@
-# BlitzQuest 🎲  
 A Django-based multiplayer board game project.
 
 ---
