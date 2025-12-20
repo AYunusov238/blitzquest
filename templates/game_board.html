@@ -247,11 +247,19 @@
     <div class="qmodal-card" role="dialog" aria-modal="true" aria-labelledby="qmodalTitle">
         <div class="qmodal-header">
             <h3 id="qmodalTitle">Question</h3>
+
+            <button id="changeQuestionBtn"
+                    class="qhead-btn"
+                    type="button"
+                    disabled
+                    title="Change question">
+                🔄 Change
+            </button>
         </div>
 
         <div class="qmodal-body">
             <p id="qPrompt" class="qprompt"></p>
-            <div id="qChoices" class="qchoices"></div>
+                <div id="qChoices" class="qchoices"></div>
             <p id="qFeedback" class="qfeedback"></p>
         </div>
     </div>

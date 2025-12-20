@@ -12,15 +12,14 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 from django.views.decorators.http import require_POST
 from django.db import transaction
+from django.http import HttpResponse
+
 
 from .models import Game, PlayerInGame, BoardTile, SupportCardInstance, SupportCardType
 from .forms import GameCreateForm, JoinGameForm
 
+
 def signup(request):
-    """
-    Simple user registration using Django's built-in UserCreationForm.
-    After signup, user is logged in and redirected to home.
-    """
     if request.method == "POST":
         form = UserCreationForm(request.POST)
         if form.is_valid():
@@ -34,24 +33,13 @@ def signup(request):
 
 
 def generate_game_code(length: int = 6) -> str:
-    """Generate a random alphanumeric game code like ABC123."""
     alphabet = string.ascii_uppercase + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
-
-
-
 def create_default_board_for_game(game: Game, enabled_tiles=None):
-    """
-    Create a board:
-    - position 0: START
-    - last tile: FINISH
-    - middle tiles: chosen only from enabled_tiles
-    """
     enabled_tiles = enabled_tiles if enabled_tiles is not None else (game.enabled_tiles or [])
 
-    # Defensive fallback: if still empty, enable everything except start/finish/empty
     if not enabled_tiles:
         enabled_tiles = [
             value for (value, _label) in BoardTile.TileType.choices
@@ -75,41 +63,27 @@ def create_default_board_for_game(game: Game, enabled_tiles=None):
 
 
 def home(request):
-    """
-    Landing page.
-    Shows quick links and some basic info.
-    """
     return render(request, "home.html")
 
 
 @login_required
 def game_list(request):
-    """
-    List games you can see: waiting and maybe your active ones.
-    """
     waiting_games = Game.objects.filter(status=Game.Status.WAITING).order_by("-created_at")
     my_games = Game.objects.filter(players__user=request.user).distinct().order_by("-created_at")
 
-    context = {
-        "waiting_games": waiting_games,
-        "my_games": my_games,
-    }
+    context = {"waiting_games": waiting_games, "my_games": my_games}
     return render(request, "game_list.html", context)
+
 
 @login_required
 def game_create(request):
-    """
-    Create a new game; user becomes host and first player.
-    """
     if request.method == "POST":
         form = GameCreateForm(request.POST)
         if form.is_valid():
             game: Game = form.save(commit=False)
 
-            # Save enabled tiles onto the game BEFORE saving
             game.enabled_tiles = form.cleaned_data.get("enabled_tiles") or []
 
-            # Generate a unique code
             while True:
                 candidate = generate_game_code()
                 if not Game.objects.filter(code=candidate).exists():
@@ -119,7 +93,6 @@ def game_create(request):
             game.host = request.user
             game.save()
 
-            # Create board tiles using only the chosen tile types
             create_default_board_for_game(game, enabled_tiles=game.enabled_tiles)
 
             PlayerInGame.objects.create(
@@ -134,20 +107,14 @@ def game_create(request):
 
             messages.success(request, f"Game created with code {game.code}. Share this with your friends.")
             return redirect("game:game_detail", game_id=game.id)
-
     else:
         form = GameCreateForm()
 
     return render(request, "game_create.html", {"form": form})
 
 
-
-
 @login_required
 def game_join(request):
-    """
-    Join an existing waiting game by code.
-    """
     if request.method == "POST":
         form = JoinGameForm(request.POST)
         if form.is_valid():
@@ -163,18 +130,15 @@ def game_join(request):
                 messages.error(request, "This game has already started or finished.")
                 return redirect("game:game_join")
 
-            # Check if already in this game
             if PlayerInGame.objects.filter(game=game, user=request.user).exists():
                 messages.info(request, "You are already in this game.")
                 return redirect("game:game_detail", game_id=game.id)
 
-            # Check room
             current_players = game.players.count()
             if current_players >= game.max_players:
                 messages.error(request, "Game is full.")
                 return redirect("game:game_join")
 
-            # Assign turn_order as current count
             PlayerInGame.objects.create(
                 game=game,
                 user=request.user,
@@ -196,28 +160,18 @@ def game_join(request):
 
 @login_required
 def game_detail(request, game_id: int):
-    """
-    Acts as lobby (when waiting) and later as main board screen (when active).
-    """
     game = get_object_or_404(Game, id=game_id)
     players = game.players.select_related("user").order_by("turn_order")
     tiles = game.tiles.order_by("position")
 
-    # Ensure only participants (or host) can see this game
     if not players.filter(user=request.user).exists():
-        # If user is host but not in players for some reason, allow
         if game.host != request.user:
             messages.error(request, "You are not a player in this game.")
             return redirect("game:game_list")
 
     is_host = (game.host == request.user)
-    can_start = (
-        is_host
-        and game.status == Game.Status.WAITING
-        and players.count() >= 2
-    )
+    can_start = is_host and game.status == Game.Status.WAITING and players.count() >= 2
 
-    # Use model helper to build a full state dict
     state = game.to_public_state(for_user=request.user)
 
     context = {
@@ -232,6 +186,7 @@ def game_detail(request, game_id: int):
     }
     return render(request, "game_detail.html", context)
 
+
 def seed_support_cards():
     SupportCardType.objects.get_or_create(
         code="move_extra",
@@ -243,7 +198,6 @@ def seed_support_cards():
             is_active=True,
         ),
     )
-
     SupportCardType.objects.get_or_create(
         code="heal",
         defaults=dict(
@@ -254,7 +208,6 @@ def seed_support_cards():
             is_active=True,
         ),
     )
-
     SupportCardType.objects.get_or_create(
         code="shield",
         defaults=dict(
@@ -265,7 +218,6 @@ def seed_support_cards():
             is_active=True,
         ),
     )
-
     SupportCardType.objects.get_or_create(
         code="reroll",
         defaults=dict(
@@ -276,7 +228,6 @@ def seed_support_cards():
             is_active=True,
         ),
     )
-
     SupportCardType.objects.get_or_create(
         code="swap_position",
         defaults=dict(
@@ -287,7 +238,6 @@ def seed_support_cards():
             is_active=True,
         ),
     )
-
     SupportCardType.objects.get_or_create(
         code="change_question",
         defaults=dict(
@@ -298,7 +248,6 @@ def seed_support_cards():
             is_active=True,
         ),
     )
-
     SupportCardType.objects.get_or_create(
         code="bonus_coin",
         defaults=dict(
@@ -309,6 +258,7 @@ def seed_support_cards():
             is_active=True,
         ),
     )
+
 
 @login_required
 def game_start(request, game_id: int):
@@ -327,10 +277,8 @@ def game_start(request, game_id: int):
         return redirect("game:game_detail", game_id=game.id)
 
     seed_support_cards()
-    # 1) generate a fresh random board
     game.generate_random_board()
 
-    # 2) reset turn index and status
     game.current_turn_index = 0
     game.status = Game.Status.ACTIVE
     game.save(update_fields=["current_turn_index", "status"])
@@ -339,72 +287,42 @@ def game_start(request, game_id: int):
     return redirect("game:game_board", game_id=game.id)
 
 @login_required
+@require_POST
+@transaction.atomic
 def game_delete(request, game_id: int):
-    """
-    Host can delete a game (only when not active).
-    """
     game = get_object_or_404(Game, id=game_id)
 
-    if request.user != game.host:
-        messages.error(request, "Only the host can delete this game.")
-        return redirect("game:game_detail", game_id=game.id)
-
-    if request.method == "POST":
-        if game.status == Game.Status.ACTIVE:
-            messages.error(request, "You cannot delete an active game. End it first.")
-            return redirect("game:game_detail", game_id=game.id)
-
-        game_code = game.code
-        game.delete()
-        messages.success(request, f"Game {game_code} has been deleted.")
+    if game.host != request.user:
+        messages.error(request, "You do not have permission to delete this game.")
         return redirect("game:game_list")
 
-    # If someone hits this URL via GET, just bounce back
-    return redirect("game:game_detail", game_id=game.id)
+    game.delete()
+    messages.success(request, "Game deleted successfully.")
+    return redirect("game:game_list")
+
+
 
 @login_required
+@require_POST
+@transaction.atomic
 def game_end(request, game_id: int):
-    """
-    Host can manually end an active game.
-    Optionally assign winner if only one player is alive.
-    """
     game = get_object_or_404(Game, id=game_id)
 
-    if request.user != game.host:
-        messages.error(request, "Only the host can end this game.")
-        return redirect("game:game_detail", game_id=game.id)
+    if game.host != request.user:
+        return JsonResponse({"detail": "Only the host can end the game."}, status=403)
 
-    if request.method == "POST":
-        if game.status != Game.Status.ACTIVE:
-            messages.error(request, "Only active games can be ended.")
-            return redirect("game:game_detail", game_id=game.id)
+    game.status = Game.Status.FINISHED
+    game.pending_question = None
+    game.save(update_fields=["status", "pending_question"])
 
-        # Simple optional winner detection: if only one alive, mark them as winner
-        alive_players = game.players.filter(is_alive=True).order_by("turn_order")
-        if alive_players.count() == 1:
-            game.winner = alive_players.first()
-        else:
-            # No clear single winner; leave winner as-is (can be null)
-            game.winner = game.winner
-
-        game.status = Game.Status.FINISHED
-        game.save()
-
-        messages.success(request, "Game has been ended.")
-        return redirect("game:game_detail", game_id=game.id)
-
-    # Any GET to this URL just returns to detail
+    messages.success(request, "Game ended.")
     return redirect("game:game_detail", game_id=game.id)
+
 @login_required
 @require_GET
 def game_state(request, game_id: int):
-    """
-    Lightweight JSON endpoint with full game state.
-    Intended for polling / AJAX / future real-time UI.
-    """
     game = get_object_or_404(Game, id=game_id)
 
-    # Permission: must be host or participant
     players = game.players.select_related("user")
     is_player = players.filter(user=request.user).exists()
     is_host = (game.host == request.user)
@@ -415,43 +333,51 @@ def game_state(request, game_id: int):
     state = game.to_public_state(for_user=request.user)
     return JsonResponse(state)
 
+
 @login_required
 @require_POST
 @transaction.atomic
 def game_roll(request, game_id: int):
-    """
-    Server-side dice roll + move for the current player.
-    Validations:
-      - game must be ACTIVE
-      - user must be a participant
-      - it must be this user's turn
-    Returns JSON with roll result and updated game state.
-    """
     game = get_object_or_404(Game, id=game_id)
 
-    if game.pending_question:
-        return JsonResponse({"detail": "Answer the question first."}, status=400)
+    if game.status != Game.Status.ACTIVE:
+        return JsonResponse({"detail": "Game is not active."}, status=400)
 
     try:
         player = game.players.select_related("user").get(user=request.user)
     except PlayerInGame.DoesNotExist:
         return JsonResponse({"detail": "You are not a player in this game."}, status=403)
 
-    if game.current_player is None or game.current_player.id != player.id:
-        return JsonResponse({"detail": "It is not your turn."}, status=403)
+    if not player.is_alive:
+        return JsonResponse({"detail": "You are eliminated."}, status=400)
 
-    # Perform dice roll + movement + turn advance
+    # If a question is pending, rolling is blocked until answered by the owner.
+    if game.pending_question:
+        game.sync_turn_to_pending_question()
+        owner_id = game.pending_question.get("for_player_id")
+        if owner_id != player.id:
+            return JsonResponse({"detail": "A question is being answered by another player."}, status=403)
+        return JsonResponse(
+            {"detail": "Answer the question first.", "game_state": game.to_public_state(for_user=request.user)},
+            status=400
+        )
+
+    # Normal turn check
+    current = game.current_player
+    if not current or current.id != player.id:
+        return JsonResponse(
+            {"detail": "It is not your turn.", "game_state": game.to_public_state(for_user=request.user)},
+            status=403
+        )
+
     action_result = game.roll_and_apply_for(player)
-
-    # Get updated full state for UI
     state = game.to_public_state(for_user=request.user)
 
-    payload = {
+    return JsonResponse({
         "action": "roll",
         "result": action_result,
         "game_state": state,
-    }
-    return JsonResponse(payload)
+    })
 
 @login_required
 @require_POST
@@ -467,15 +393,16 @@ def answer_question(request, game_id: int):
     except PlayerInGame.DoesNotExist:
         return JsonResponse({"detail": "You are not a player in this game."}, status=403)
 
-    if game.current_player is None or game.current_player.id != player.id:
-        return JsonResponse({"detail": "It is not your turn."}, status=403)
-
     pq = game.pending_question
     if not pq:
         return JsonResponse({"detail": "No pending question."}, status=400)
 
+    # ✅ authority: pending_question ownership (turn is locked here)
     if pq.get("for_player_id") != player.id:
-        return JsonResponse({"detail": "Not your question."}, status=403)
+        return JsonResponse({"detail": "It is not your turn."}, status=403)
+
+    # keep turn index aligned (prevents drift)
+    game.sync_turn_to_pending_question()
 
     try:
         body = json.loads(request.body.decode("utf-8"))
@@ -487,8 +414,8 @@ def answer_question(request, game_id: int):
     is_correct = (choice_index == correct_index)
 
     # Rewards:
-    # Correct: +1 coin, +1 hp
-    # Wrong: +1 hp
+    # Correct: +1 coin
+    # Wrong: -1 hp (damage with shield)
     if is_correct:
         player.coins += 1
         player.save(update_fields=["coins"])
@@ -508,17 +435,11 @@ def answer_question(request, game_id: int):
         "game_state": state,
     })
 
+
 @login_required
 def game_board(request, game_id: int):
-    """
-    Full-screen board view with dice, tokens, live state, and
-    server-rendered tiles/players.
-
-    Only host or players in this game may enter.
-    """
     game = get_object_or_404(Game, id=game_id)
 
-    # --- permission check ---
     players_qs = game.players.select_related("user")
     is_player = players_qs.filter(user=request.user).exists()
     is_host = (game.host == request.user)
@@ -527,27 +448,25 @@ def game_board(request, game_id: int):
         messages.error(request, "You are not a player in this game.")
         return redirect("game:game_list")
 
-    # --- ensure game is active ---
     if game.status != Game.Status.ACTIVE:
         messages.info(request, "Game is not active yet.")
         return redirect("game:game_detail", game_id=game.id)
 
-    # --- full public state for JS (live board, turns, etc.) ---
     state = game.to_public_state(for_user=request.user)
 
-    # --- tiles + players for server-rendered parts of the board ---
     tiles_qs = game.tiles.order_by("position")
     players_ordered = players_qs.order_by("turn_order")
 
     context = {
         "game": game,
-        "game_state": state,                  # JSON-friendly state for JS
+        "game_state": state,
         "me_player_id": state["you_player_id"],
         "current_player_id": state["current_player_id"],
-        "players": players_ordered,           # for template loops
-        "tiles": tiles_qs,                    # for template loops (e.g. 40 tiles)
+        "players": players_ordered,
+        "tiles": tiles_qs,
     }
     return render(request, "game_board.html", context)
+
 
 @login_required
 @require_POST
@@ -565,12 +484,10 @@ def use_card(request, game_id):
 
     game = Game.objects.select_related().get(id=game_id)
 
-    # Find "me"
     me = game.players.select_related("user").filter(user=request.user).first()
     if not me:
         return JsonResponse({"detail": "You are not in this game."}, status=403)
 
-    # Validate card ownership
     card = SupportCardInstance.objects.select_related("card_type", "owner").filter(
         id=card_id, owner=me, is_used=False
     ).first()
@@ -579,9 +496,7 @@ def use_card(request, game_id):
 
     ctype = card.card_type
     et = ctype.effect_type
-    params = ctype.params or {}
 
-    # Apply effect
     if et == "move_extra":
         steps = random.randint(1, 3)
         game.apply_basic_move(me, dice_value=steps)
@@ -606,7 +521,6 @@ def use_card(request, game_id):
         if not target:
             return JsonResponse({"detail": "Target player not found."}, status=404)
 
-        # must be adjacent
         if abs(target.position - me.position) != 1:
             return JsonResponse({"detail": "Target player must be adjacent."}, status=400)
 
@@ -644,9 +558,7 @@ def use_card(request, game_id):
     else:
         return JsonResponse({"detail": f"Unsupported card effect: {et}"}, status=400)
 
-    # mark used
     card.is_used = True
     card.save(update_fields=["is_used"])
 
-    # return updated state
     return JsonResponse({"game_state": game.to_public_state(for_user=request.user)})

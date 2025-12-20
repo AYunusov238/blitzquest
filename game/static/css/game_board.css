@@ -591,29 +591,59 @@
   z-index: 9999;
 }
 
-.qmodal-backdrop {
+.qmodal-backdrop{
   position: absolute;
   inset: 0;
-  background: rgba(0,0,0,0.55);
+  background: rgba(0,0,0,0.62);
+  backdrop-filter: blur(2px);
 }
-
-.qmodal-card {
+.qmodal-card{
   position: relative;
-  width: min(520px, calc(100% - 2rem));
+  width: min(560px, calc(100% - 2rem));
   margin: 10vh auto 0;
-  border-radius: 16px;
-  background: #0b1120;
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 30% 20%, rgba(255,255,255,0.06), transparent 55%),
+    linear-gradient(180deg, #0b1120 0%, #070b15 100%);
   color: #e5e7eb;
-  box-shadow: 0 10px 40px rgba(0,0,0,0.5);
-  border: 1px solid rgba(148,163,184,0.25);
+  box-shadow: 0 18px 70px rgba(0,0,0,0.60);
+  border: 1px solid rgba(148,163,184,0.22);
   overflow: hidden;
 }
 
-.qmodal-header {
+.qmodal-header{
   padding: 1rem 1.25rem;
-  border-bottom: 1px solid rgba(148,163,184,0.18);
+  border-bottom: 1px solid rgba(148,163,184,0.16);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
+.qmodal-header h3{
+  margin: 0;
+  font-size: 1.05rem;
+  letter-spacing: 0.2px;
+}
+.qhead-btn{
+  border-radius: 12px;
+  padding: 10px 14px;
+  background: rgba(148,163,184,0.08);
+  border: 1px dashed rgba(148,163,184,0.35);
+  color: #e5e7eb;
+  cursor: pointer;
+  transition: 0.2s;
+  white-space: nowrap;
+}
+.qhead-btn:hover{
+  background: rgba(241,196,15,0.10);
+  border-color: rgba(241,196,15,0.55);
+}
+
+.qhead-btn:disabled{
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .qmodal-body {
   padding: 1rem 1.25rem 1.25rem;
 }
@@ -623,36 +653,68 @@
   font-size: 1.05rem;
 }
 
-.qchoices {
+.qchoices{
   display: grid;
-  gap: 0.6rem;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
 }
-
-.qchoice-btn.qchoice-btn-secondary{
+.qchoice-btn{
   width: 100%;
-  padding: 0.75rem 0.9rem;
-  border-radius: 12px;
+  padding: 0.95rem 0.95rem;
+  border-radius: 14px;
   background: rgba(148,163,184,0.10);
   color: #e5e7eb;
   border: 1px solid rgba(148,163,184,0.18);
   cursor: pointer;
   text-align: left;
+  transition: transform 140ms ease, background 140ms ease, border-color 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
+  min-height: 54px;
 }
 
-.qchoice-btn:hover {
+.qchoice-btn:hover{
   background: rgba(148,163,184,0.16);
+  transform: translateY(-2px);
+  border-color: rgba(148,163,184,0.30);
+  box-shadow: 0 10px 18px rgba(0,0,0,0.25);
+}
+.qchoice-btn:active{
+  transform: translateY(0) scale(0.985);
+}
+/* Correct / wrong feedback states */
+.qchoice-btn.correct{
+  background: linear-gradient(135deg, rgba(34,197,94,0.30), rgba(16,185,129,0.16));
+  border-color: rgba(34,197,94,0.65);
+  box-shadow: 0 0 0 1px rgba(34,197,94,0.15) inset, 0 10px 18px rgba(0,0,0,0.25);
 }
 
-.qchoice-btn:disabled {
+.qchoice-btn.wrong{
+  background: linear-gradient(135deg, rgba(239,68,68,0.28), rgba(220,38,38,0.14));
+  border-color: rgba(239,68,68,0.55);
+  opacity: 0.9;
+}
+.qchoice-btn:disabled{
   opacity: 0.65;
   cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
 }
-
 .qfeedback {
   margin: 0.85rem 0 0;
   min-height: 1.2em;
   color: #cbd5e1;
   font-size: 0.95rem;
+}
+.qchoice-btn.qchoice-btn-secondary{
+  grid-column: 1 / -1;
+  text-align: center;
+  background: rgba(148,163,184,0.06);
+  border-style: dashed;
+  opacity: 0.95;
+}
+
+.qchoice-btn.qchoice-btn-secondary:hover{
+  background: rgba(241,196,15,0.10);
+  border-color: rgba(241,196,15,0.55);
 }
 /* ===== BONUS TILE DESIGN ===== */
 

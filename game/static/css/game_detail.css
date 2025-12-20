@@ -374,23 +374,6 @@
         grid-template-columns: minmax(0, 1fr);
     }
 }
-.game-delete-form {
-    margin: 0;
-}
-
-.btn-delete-game {
-    font-size: 0.8rem;
-    padding: 0.35rem 0.9rem;
-}
-.game-end-form {
-    margin: 0;
-}
-
-.btn-end-game {
-    font-size: 0.8rem;
-    padding: 0.35rem 0.9rem;
-    margin-top: 0.3rem;
-}
 /* === Board main layout === */
 
 .board-main {

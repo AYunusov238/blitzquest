@@ -21,101 +21,131 @@ function escapeHtml(str) {
         .replace(/'/g, "&#039;");
 }
 function showQuestionModal(q, state) {
-    const modal = document.getElementById("questionModal");
-    const prompt = document.getElementById("qPrompt");
-    const choicesWrap = document.getElementById("qChoices");
-    const feedback = document.getElementById("qFeedback");
+  const modal = document.getElementById("questionModal");
+  const prompt = document.getElementById("qPrompt");
+  const choicesWrap = document.getElementById("qChoices");
+  const feedback = document.getElementById("qFeedback");
+  const changeBtn = document.getElementById("changeQuestionBtn");
 
-    if (!modal || !prompt || !choicesWrap || !feedback) return;
+  prompt.textContent = q.prompt || "";
+  feedback.textContent = "";
+  choicesWrap.innerHTML = "";
 
-    prompt.textContent = q.prompt || "";
-    feedback.textContent = "";
-    choicesWrap.innerHTML = "";
+  const gameId = window.GAME_ID;
 
-    const gameId = window.GAME_ID;
+  // detect change-question card
+  const cards = state && Array.isArray(state.your_cards) ? state.your_cards : [];
+  const canChange = !!(q && !q.changed_once);
+  const changeCard = canChange
+    ? cards.find(c =>
+        (c.effect_type || "").toLowerCase() === "change_question" ||
+        (c.code || "").toLowerCase() === "change_question"
+      )
+    : null;
 
-    // Allow using Change Question card directly inside the modal
-    const cards = state && Array.isArray(state.your_cards) ? state.your_cards : [];
-    const canChange = q && !q.changed_once;
-    const changeCard = canChange ? cards.find(c => (c.effect_type || "") === "change_question") : null;
+  // header button behavior
+  if (!canChange) {
+    changeBtn.textContent = "🔄 Used";
+    changeBtn.disabled = true;
+  } else if (!changeCard) {
+    changeBtn.textContent = "🔄 No card";
+    changeBtn.disabled = true;
+  } else {
+    changeBtn.textContent = "🔄 Change";
+    changeBtn.disabled = false;
+  }
 
-    if (changeCard) {
-        const changeBtn = document.createElement("button");
-        changeBtn.className = "qchoice-btn qchoice-btn-secondary";
-        changeBtn.type = "button";
-        changeBtn.textContent = "Change question";
+  changeBtn.onclick = async () => {
+    if (!canChange || !changeCard) return;
 
-        changeBtn.addEventListener("click", async () => {
-            Array.from(choicesWrap.querySelectorAll("button")).forEach(b => b.disabled = true);
-            feedback.textContent = "Changing question...";
+    // disable interactions while changing
+    changeBtn.disabled = true;
+    Array.from(choicesWrap.querySelectorAll("button")).forEach(b => (b.disabled = true));
+    feedback.textContent = "Changing question...";
 
-            try {
-                await useCard(gameId, changeCard.id);
-                Array.from(choicesWrap.querySelectorAll("button")).forEach(b => b.disabled = false);
-            } catch (e) {
-                console.error(e);
-                feedback.textContent = "Could not change question.";
-                Array.from(choicesWrap.querySelectorAll("button")).forEach(b => b.disabled = false);
-            }
-        });
-
-        choicesWrap.appendChild(changeBtn);
+    try {
+      await useCard(gameId, changeCard.id);
+      // useCard() should refresh state and call showQuestionModal again
+    } catch (e) {
+      console.error(e);
+      feedback.textContent = "Could not change question.";
+      changeBtn.disabled = false;
+      Array.from(choicesWrap.querySelectorAll("button")).forEach(b => (b.disabled = false));
     }
+  };
 
-    (q.choices || []).forEach((text, idx) => {
-        const btn = document.createElement("button");
-        btn.className = "qchoice-btn";
-        btn.type = "button";
-        btn.textContent = text;
+  // render options (IMPORTANT: class must be qchoice-btn)
+  (q.choices || []).forEach((text, idx) => {
+    const btn = document.createElement("button");
+    btn.className = "qchoice-btn";
+    btn.type = "button";
+    btn.dataset.qidx = String(idx);
+    btn.textContent = text;
 
-        btn.addEventListener("click", async () => {
-            Array.from(choicesWrap.querySelectorAll("button")).forEach(b => b.disabled = true);
-            feedback.textContent = "Submitting...";
-
-            try {
-                const resp = await fetch(`/games/${gameId}/answer_question/`, {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "X-Requested-With": "XMLHttpRequest",
-                        "X-CSRFToken": getCookie("csrftoken") || "",
-                    },
-                    body: JSON.stringify({ choice_index: idx }),
-                });
-
-                const data = await resp.json().catch(() => ({}));
-                if (!resp.ok) {
-                    feedback.textContent = (data && data.detail) ? data.detail : `Error: ${resp.status}`;
-                    Array.from(choicesWrap.querySelectorAll("button")).forEach(b => b.disabled = false);
-                    return;
-                }
-
-                const correct = data?.result?.correct;
-                feedback.textContent = correct ? "Correct: +1 coin, +1 HP" : "Wrong: -1 HP";
-
-                if (data.game_state) {
-                    updateBoardUI(data.game_state);
-                    updatePlayersUI(data.game_state);
-                    updateDiceUI(data.game_state);
-                    renderPlayerTokens(data.game_state);
-                    renderQuestionUI(data.game_state);
-                    renderInventoryUI(data.game_state);
-                } else {
-                    fetchGameState(gameId);
-                }
-            } catch (e) {
-                console.error(e);
-                feedback.textContent = "Network error.";
-                Array.from(choicesWrap.querySelectorAll("button")).forEach(b => b.disabled = false);
-            }
+    btn.addEventListener("click", async () => {
+      Array.from(choicesWrap.querySelectorAll("button")).forEach(b => b.disabled = true);
+      changeBtn.disabled = true;
+      try {
+        const resp = await fetch(`/games/${gameId}/answer_question/`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "X-CSRFToken": getCookie("csrftoken") || "",
+          },
+          body: JSON.stringify({ choice_index: idx }),
         });
 
-        choicesWrap.appendChild(btn);
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          feedback.textContent = (data && data.detail) ? data.detail : `Error: ${resp.status}`;
+          Array.from(choicesWrap.querySelectorAll("button")).forEach(b => b.disabled = false);
+          return;
+        }
+
+        const correct = data?.result?.correct;
+        feedback.textContent = correct ? "Correct: +1 coin, +1 HP" : "Wrong: -1 HP";
+
+        // Visual feedback (green/red) + show correct option if wrong
+        try {
+          if (correct) {
+            btn.classList.add("correct");
+          } else {
+            btn.classList.add("wrong");
+            const correctIdx = (q && typeof q.correct_index === "number") ? q.correct_index : null;
+            if (correctIdx !== null) {
+              const correctBtn = choicesWrap.querySelector(`button[data-qidx="${correctIdx}"]`);
+              if (correctBtn) correctBtn.classList.add("correct");
+            }
+          }
+        } catch (e) { /* ignore styling errors */ }
+
+        // refresh UI
+        if (data.game_state) {
+          updateBoardUI(data.game_state);
+          updatePlayersUI(data.game_state);
+          updateDiceUI(data.game_state);
+          renderPlayerTokens(data.game_state);
+          renderQuestionUI(data.game_state);
+          renderInventoryUI(data.game_state);
+        } else {
+          fetchGameState(gameId);
+        }
+
+      } catch (e) {
+        console.error(e);
+        feedback.textContent = "Network error.";
+        Array.from(choicesWrap.querySelectorAll("button")).forEach(b => b.disabled = false);
+      }
     });
 
-    modal.classList.remove("is-hidden");
-    modal.setAttribute("aria-hidden", "false");
+    choicesWrap.appendChild(btn);
+  });
+
+  modal.classList.remove("is-hidden");
+  modal.setAttribute("aria-hidden", "false");
 }
+
 
 function hideQuestionModal() {
     const modal = document.getElementById("questionModal");

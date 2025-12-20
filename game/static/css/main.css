@@ -211,6 +211,29 @@ a:hover {
     text-decoration: none;
 }
 
+.btn.btn-secondary.gl-game-close {
+    background: transparent;
+    color: #f87171;
+    border: 1px solid rgba(248, 113, 113, 0.55);
+}
+
+.gl-game-close:hover {
+    background: rgba(248, 113, 113, 0.12);
+    border-color: rgba(248, 113, 113, 0.85);
+    color: #ffffff;
+    transform: translateY(-1px);
+    box-shadow: 0 12px 22px rgba(248, 113, 113, 0.18);
+    text-decoration: none;
+}
+
+.gl-game-close:active {
+    transform: translateY(0);
+}
+.delete-form {
+    margin: 0;
+    display: inline-block;
+}
+
 /* ========== Button sizes / states ========== */
 .btn-sm {
     padding: 0.45rem 0.9rem;
@@ -579,7 +602,21 @@ a:hover {
 .footer-hint {
     opacity: 0.8;
 }
+.btn-danger {
+    background: transparent;
+    color: #f87171;
+    border: 1px solid rgba(248, 113, 113, 0.65);
+}
 
+.btn-danger:hover {
+    background: rgba(248, 113, 113, 0.12);
+    border-color: rgba(248, 113, 113, 0.9);
+    color: #ffffff;
+}
+
+.btn-danger:active {
+    transform: translateY(0);
+}
 /* ========== Responsive ========== */
 @media (max-width: 860px) {
     .site-header-inner {
