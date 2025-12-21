@@ -30,5 +30,20 @@ urlpatterns = [
     path('games/<int:game_id>/answer_question/', views.answer_question, name='answer_question'),
     # use card endpoint
     path('games/<int:game_id>/use_card/', views.use_card, name='use_card'),
+    # shop buy endpoint
+    path('games/<int:game_id>/shop/buy/', views.shop_buy, name='shop_buy'),
+    # shop sell endpoint
+    path('games/<int:game_id>/shop/sell/', views.shop_sell, name='shop_sell'),
+    # shop close endpoint
+    path('games/<int:game_id>/shop/close/', views.shop_close, name='shop_close'),
+    # duel select opponent endpoint
+    path('games/<int:game_id>/duel/select_opponent/', views.duel_select_opponent, name='duel_select_opponent'),
+    # duel commit endpoint
+    path('games/<int:game_id>/duel/commit/', views.duel_commit, name='duel_commit'),
+    # duel predict endpoint
+    path('games/<int:game_id>/duel/predict/', views.duel_predict, name='duel_predict'),
+    # duel choose reward endpoint
+    path('games/<int:game_id>/duel/choose_reward/', views.duel_choose_reward, name='duel_choose_reward'),
+
 ]
 

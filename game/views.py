@@ -313,7 +313,8 @@ def game_end(request, game_id: int):
 
     game.status = Game.Status.FINISHED
     game.pending_question = None
-    game.save(update_fields=["status", "pending_question"])
+    game.pending_shop = None
+    game.save(update_fields=["status", "pending_question", "pending_shop"])
 
     messages.success(request, "Game ended.")
     return redirect("game:game_detail", game_id=game.id)
@@ -361,7 +362,29 @@ def game_roll(request, game_id: int):
             {"detail": "Answer the question first.", "game_state": game.to_public_state(for_user=request.user)},
             status=400
         )
-
+    
+    # If a shop is pending, rolling is blocked until closed by the owner.
+    if game.pending_shop:
+        game.sync_turn_to_pending_shop()
+        owner_id = game.pending_shop.get("for_player_id")
+        if owner_id != player.id:
+            return JsonResponse({"detail": "A player is currently shopping."}, status=403)
+        return JsonResponse(
+            {"detail": "Close the shop first.", "game_state": game.to_public_state(for_user=request.user)},
+            status=400
+        )
+    
+    if getattr(game, "pending_duel", None):
+        game.sync_turn_to_pending_duel()
+        pd = game.pending_duel or {}
+        initiator_id = pd.get("initiator_id") or pd.get("for_player_id")
+        participants = [pid for pid in [initiator_id, pd.get("opponent_id")] if pid]
+        if player.id not in participants:
+            return JsonResponse({"detail": "A duel is being resolved."}, status=403)
+        return JsonResponse(
+            {"detail": "Finish the duel first.", "game_state": game.to_public_state(for_user=request.user)},
+            status=400
+        )
     # Normal turn check
     current = game.current_player
     if not current or current.id != player.id:
@@ -434,6 +457,115 @@ def answer_question(request, game_id: int):
         "result": {"correct": is_correct},
         "game_state": state,
     })
+
+@login_required
+@require_POST
+@transaction.atomic
+def shop_buy(request, game_id: int):
+    game = get_object_or_404(Game, id=game_id)
+    if game.status != Game.Status.ACTIVE:
+        return JsonResponse({"detail": "Game is not active."}, status=400)
+
+    me = game.players.select_related("user").filter(user=request.user).first()
+    if not me:
+        return JsonResponse({"detail": "You are not a player in this game."}, status=403)
+
+    ps = game.pending_shop
+    if not ps:
+        return JsonResponse({"detail": "No active shop."}, status=400)
+    if ps.get("for_player_id") != me.id:
+        return JsonResponse({"detail": "It is not your shop."}, status=403)
+
+    try:
+        body = json.loads(request.body.decode("utf-8") or "{}")
+        card_type_id = int(body.get("card_type_id"))
+    except Exception:
+        return JsonResponse({"detail": "Invalid payload."}, status=400)
+
+    offers = ps.get("offers") or []
+    offer = next((o for o in offers if int(o.get("card_type_id")) == card_type_id), None)
+    if not offer:
+        return JsonResponse({"detail": "This item is not available in the shop."}, status=400)
+
+    cost = int(offer.get("cost") or 0)
+    if me.coins < cost:
+        return JsonResponse({"detail": "Not enough coins."}, status=400)
+
+    ct = SupportCardType.objects.filter(id=card_type_id, is_active=True).first()
+    if not ct:
+        return JsonResponse({"detail": "Card type not found."}, status=404)
+
+    me.coins -= cost
+    me.save(update_fields=["coins"])
+    SupportCardInstance.objects.create(card_type=ct, owner=me)
+
+    return JsonResponse({"game_state": game.to_public_state(for_user=request.user)})
+
+
+@login_required
+@require_POST
+@transaction.atomic
+def shop_sell(request, game_id: int):
+    game = get_object_or_404(Game, id=game_id)
+    if game.status != Game.Status.ACTIVE:
+        return JsonResponse({"detail": "Game is not active."}, status=400)
+
+    me = game.players.select_related("user").filter(user=request.user).first()
+    if not me:
+        return JsonResponse({"detail": "You are not a player in this game."}, status=403)
+
+    ps = game.pending_shop
+    if not ps:
+        return JsonResponse({"detail": "No active shop."}, status=400)
+    if ps.get("for_player_id") != me.id:
+        return JsonResponse({"detail": "It is not your shop."}, status=403)
+
+    try:
+        body = json.loads(request.body.decode("utf-8") or "{}")
+        card_instance_id = int(body.get("card_instance_id"))
+    except Exception:
+        return JsonResponse({"detail": "Invalid payload."}, status=400)
+
+    inst = SupportCardInstance.objects.select_related("card_type").filter(
+        id=card_instance_id, owner=me, is_used=False
+    ).first()
+    if not inst:
+        return JsonResponse({"detail": "Card not found."}, status=404)
+
+    # sell value: ~50% of buy cost, minimum 1
+    buy_cost = game.support_card_cost(inst.card_type)
+    sell_value = max(1, int(buy_cost // 2))
+
+    inst.delete()
+    me.coins += sell_value
+    me.save(update_fields=["coins"])
+
+    return JsonResponse({"game_state": game.to_public_state(for_user=request.user)})
+
+
+@login_required
+@require_POST
+@transaction.atomic
+def shop_close(request, game_id: int):
+    game = get_object_or_404(Game, id=game_id)
+    if game.status != Game.Status.ACTIVE:
+        return JsonResponse({"detail": "Game is not active."}, status=400)
+
+    me = game.players.select_related("user").filter(user=request.user).first()
+    if not me:
+        return JsonResponse({"detail": "You are not a player in this game."}, status=403)
+
+    ps = game.pending_shop
+    if not ps:
+        return JsonResponse({"detail": "No active shop."}, status=400)
+    if ps.get("for_player_id") != me.id:
+        return JsonResponse({"detail": "It is not your shop."}, status=403)
+
+    game.pending_shop = None
+    game.save(update_fields=["pending_shop"])
+    game.advance_turn()
+
+    return JsonResponse({"game_state": game.to_public_state(for_user=request.user)})
 
 
 @login_required
@@ -562,3 +694,369 @@ def use_card(request, game_id):
     card.save(update_fields=["is_used"])
 
     return JsonResponse({"game_state": game.to_public_state(for_user=request.user)})
+
+# ---------- helpers ----------
+
+def _json_ok(game, request, extra=None):
+    payload = {"ok": True, "game_state": game.to_public_state(for_user=request.user)}
+    if extra:
+        payload.update(extra)
+    return JsonResponse(payload)
+
+
+def _json_err(game, request, msg, status=400, extra=None):
+    payload = {"ok": False, "detail": msg}
+    if game is not None:
+        payload["game_state"] = game.to_public_state(for_user=request.user)
+    if extra:
+        payload.update(extra)
+    return JsonResponse(payload, status=status)
+
+
+def _get_me(game, request):
+    # Your project uses game.players with user relation (see to_public_state)
+    return game.players.select_related("user").filter(user=request.user).first()
+
+
+def _interaction_bonus(my_choice: str, opp_choice: str) -> int:
+    # Attack > Bluff, Bluff > Defend, Defend > Attack
+    if my_choice == opp_choice:
+        return 0
+    if my_choice == "attack" and opp_choice == "bluff":
+        return 1
+    if my_choice == "bluff" and opp_choice == "defend":
+        return 1
+    if my_choice == "defend" and opp_choice == "attack":
+        return 1
+    return 0
+
+
+def _prediction_points(my_prediction: str, opp_choice: str) -> int:
+    return 1 if my_prediction == opp_choice else 0
+
+
+def _compute_scores(a_choice, a_pred, b_choice, b_pred):
+    a = _prediction_points(a_pred, b_choice) + _interaction_bonus(a_choice, b_choice)
+    b = _prediction_points(b_pred, a_choice) + _interaction_bonus(b_choice, a_choice)
+    return a, b
+
+
+def _end_turn_safely(game):
+    # Use your existing method if present
+    if hasattr(game, "end_turn") and callable(getattr(game, "end_turn")):
+        game.end_turn()
+        return
+    # Fallback: advance index
+    game.current_turn_index = (game.current_turn_index + 1) % max(game.players.count(), 1)
+    game.save(update_fields=["current_turn_index"])
+
+
+def _apply_hp_damage_with_shield(player, dmg: int) -> bool:
+    """
+    Returns True if blocked by shield_points, else False.
+    Uses your existing shield_points attribute seen in to_public_state().
+    """
+    if dmg <= 0:
+        return False
+
+    shield = int(getattr(player, "shield_points", 0) or 0)
+    if shield > 0:
+        player.shield_points = max(0, shield - dmg)
+        player.save(update_fields=["shield_points"])
+        return True
+
+    # apply hp
+    player.hp = max(0, player.hp - dmg)
+    if player.hp <= 0:
+        player.hp = 0
+        player.is_alive = False
+        player.save(update_fields=["hp", "is_alive"])
+    else:
+        player.save(update_fields=["hp"])
+    return False
+
+
+# =========================================================
+# 1) Select opponent (initiator only)
+# =========================================================
+@require_POST
+@transaction.atomic
+def duel_select_opponent(request, game_id):
+    game = get_object_or_404(Game, id=game_id)
+    me = _get_me(game, request)
+    if me is None:
+        return _json_err(None, request, "Not in this game.", status=403)
+
+    pd = game.pending_duel or None
+    if not pd or pd.get("type") != "prediction":
+        return _json_err(game, request, "No active duel.", status=409)
+
+    initiator_id = pd.get("initiator_id") or pd.get("for_player_id")
+    if me.id != initiator_id:
+        return _json_err(game, request, "Only the duel initiator can choose the opponent.", status=403)
+
+    if pd.get("status") != "choose_opponent":
+        return _json_err(game, request, "Duel is not in opponent selection phase.", status=409)
+
+    opponent_id = request.POST.get("opponent_id")
+    if not opponent_id:
+        return _json_err(game, request, "Missing opponent_id.", status=400)
+
+    try:
+        opponent_id_int = int(opponent_id)
+    except ValueError:
+        return _json_err(game, request, "Invalid opponent_id.", status=400)
+
+    opponent = game.players.select_related("user").filter(id=opponent_id_int, is_alive=True).first()
+    if opponent is None or opponent.id == me.id:
+        return _json_err(game, request, "Invalid opponent.", status=400)
+
+    # Set opponent + move to commit phase
+    pd["opponent_id"] = opponent.id
+    pd["status"] = "commit"
+    pd.setdefault("choices", {})
+    pd.setdefault("predictions", {})
+
+    game.pending_duel = pd
+    game.save(update_fields=["pending_duel"])
+
+    return _json_ok(game, request, extra={"phase": "commit"})
+
+
+# =========================================================
+# 2) Commit (hidden choice) with costs
+# =========================================================
+@require_POST
+@transaction.atomic
+def duel_commit(request, game_id):
+    game = get_object_or_404(Game, id=game_id)
+    me = _get_me(game, request)
+    if me is None:
+        return _json_err(None, request, "Not in this game.", status=403)
+
+    pd = game.pending_duel or None
+    if not pd or pd.get("type") != "prediction":
+        return _json_err(game, request, "No active duel.", status=409)
+
+    if pd.get("status") != "commit":
+        return _json_err(game, request, "Duel is not in commit phase.", status=409)
+
+    initiator_id = pd.get("initiator_id") or pd.get("for_player_id")
+    opponent_id = pd.get("opponent_id")
+    if me.id not in [initiator_id, opponent_id]:
+        return _json_err(game, request, "You are not a duel participant.", status=403)
+
+    choice = (request.POST.get("choice") or "").strip().lower()
+    if choice not in ["attack", "defend", "bluff"]:
+        return _json_err(game, request, "Invalid choice.", status=400)
+
+    choices = pd.setdefault("choices", {})
+    me_key = str(me.id)
+
+    if me_key in choices:
+        return _json_err(game, request, "You already committed.", status=409)
+
+    # ---- costs ----
+    if choice == "defend":
+        if me.coins < 1:
+            return _json_err(game, request, "Not enough coins for Defend.", status=400)
+        me.coins -= 1
+        me.save(update_fields=["coins"])
+
+    if choice == "bluff":
+        # "any support card": consume any unused card from inventory
+        card = me.cards.select_related("card_type").filter(is_used=False).first()
+        if card is None:
+            return _json_err(game, request, "Bluff requires any support card.", status=400)
+        card.is_used = True
+        card.save(update_fields=["is_used"])
+
+    choices[me_key] = choice
+    pd["choices"] = choices
+
+    # advance if both committed
+    if str(initiator_id) in choices and str(opponent_id) in choices:
+        pd["status"] = "predict"
+
+    game.pending_duel = pd
+    game.save(update_fields=["pending_duel"])
+
+    return _json_ok(game, request, extra={"phase": pd.get("status")})
+
+
+# =========================================================
+# 3) Predict (then compute winner/draw; winner chooses reward)
+# =========================================================
+@require_POST
+@transaction.atomic
+def duel_predict(request, game_id):
+    game = get_object_or_404(Game, id=game_id)
+    me = _get_me(game, request)
+    if me is None:
+        return _json_err(None, request, "Not in this game.", status=403)
+
+    pd = game.pending_duel or None
+    if not pd or pd.get("type") != "prediction":
+        return _json_err(game, request, "No active duel.", status=409)
+
+    if pd.get("status") != "predict":
+        return _json_err(game, request, "Duel is not in predict phase.", status=409)
+
+    initiator_id = pd.get("initiator_id") or pd.get("for_player_id")
+    opponent_id = pd.get("opponent_id")
+    if me.id not in [initiator_id, opponent_id]:
+        return _json_err(game, request, "You are not a duel participant.", status=403)
+
+    pred = (request.POST.get("prediction") or "").strip().lower()
+    if pred not in ["attack", "defend", "bluff"]:
+        return _json_err(game, request, "Invalid prediction.", status=400)
+
+    predictions = pd.setdefault("predictions", {})
+    me_key = str(me.id)
+    if me_key in predictions:
+        return _json_err(game, request, "You already predicted.", status=409)
+
+    predictions[me_key] = pred
+    pd["predictions"] = predictions
+
+    # if both predicted -> resolve
+    if str(initiator_id) in predictions and str(opponent_id) in predictions:
+        choices = pd.get("choices") or {}
+        if str(initiator_id) not in choices or str(opponent_id) not in choices:
+            return _json_err(game, request, "Missing duel choices.", status=409)
+
+        a_choice = choices[str(initiator_id)]
+        b_choice = choices[str(opponent_id)]
+        a_pred = predictions[str(initiator_id)]
+        b_pred = predictions[str(opponent_id)]
+
+        a_score, b_score = _compute_scores(a_choice, a_pred, b_choice, b_pred)
+
+        reveal = {
+            "initiator_choice": a_choice,
+            "opponent_choice": b_choice,
+            "initiator_prediction": a_pred,
+            "opponent_prediction": b_pred,
+            "scores": {"initiator": a_score, "opponent": b_score},
+        }
+
+        pd["reveal"] = reveal
+
+        if a_score == b_score:
+            pd["is_draw"] = True
+            pd["winner_id"] = None
+            pd["loser_id"] = None
+            pd["status"] = "resolved"
+
+            # clear duel + end turn
+            game.pending_duel = None
+            game.save(update_fields=["pending_duel"])
+            _end_turn_safely(game)
+            return _json_ok(game, request, extra={"resolved": True, "draw": True})
+
+        # winner exists -> winner must choose reward
+        if a_score > b_score:
+            winner_id, loser_id = initiator_id, opponent_id
+        else:
+            winner_id, loser_id = opponent_id, initiator_id
+
+        pd["is_draw"] = False
+        pd["winner_id"] = int(winner_id)
+        pd["loser_id"] = int(loser_id)
+        pd["status"] = "winner_choice"
+
+    game.pending_duel = pd
+    game.save(update_fields=["pending_duel"])
+    return _json_ok(game, request, extra={"phase": pd.get("status")})
+
+
+# =========================================================
+# 4) Winner chooses reward (applies effects, clears duel, ends turn)
+# =========================================================
+@require_POST
+@transaction.atomic
+def duel_choose_reward(request, game_id):
+    game = get_object_or_404(Game, id=game_id)
+    me = _get_me(game, request)
+    if me is None:
+        return _json_err(None, request, "Not in this game.", status=403)
+
+    pd = game.pending_duel or None
+    if not pd or pd.get("type") != "prediction":
+        return _json_err(game, request, "No active duel.", status=409)
+
+    if pd.get("status") != "winner_choice":
+        return _json_err(game, request, "Duel is not waiting for winner choice.", status=409)
+
+    winner_id = pd.get("winner_id")
+    loser_id = pd.get("loser_id")
+    if not winner_id or not loser_id:
+        return _json_err(game, request, "Duel winner/loser not set.", status=409)
+
+    if me.id != int(winner_id):
+        return _json_err(game, request, "Only the duel winner can choose the reward.", status=403)
+
+    action = (request.POST.get("action") or "").strip().lower()
+    if action not in ["coins", "hp", "push_back", "steal_card"]:
+        return _json_err(game, request, "Invalid action.", status=400)
+
+    winner = game.players.filter(id=int(winner_id)).first()
+    loser = game.players.filter(id=int(loser_id)).first()
+    if winner is None or loser is None:
+        return _json_err(game, request, "Players not found.", status=409)
+
+    # Effects object (same style as your engine)
+    effects = {
+        "coins_delta": 0,
+        "hp_delta": 0,
+        "extra": {
+            "duel": {
+                "type": "prediction",
+                "winner_id": winner.id,
+                "loser_id": loser.id,
+                "reward_action": action,
+                "reveal": pd.get("reveal"),
+            }
+        },
+    }
+
+    if action == "coins":
+        winner.coins += 3
+        winner.save(update_fields=["coins"])
+        effects["coins_delta"] = 3
+
+    elif action == "hp":
+        blocked = _apply_hp_damage_with_shield(loser, 1)
+        effects["extra"]["duel"]["hp_blocked_by_shield"] = blocked
+        effects["extra"]["duel"]["loser_hp_after"] = loser.hp
+
+    elif action == "push_back":
+        loser.position = max(0, int(loser.position or 0) - 1)
+        loser.save(update_fields=["position"])
+        effects["extra"]["duel"]["loser_pushed_back"] = 1
+        effects["extra"]["duel"]["loser_position_after"] = loser.position
+
+    elif action == "steal_card":
+        stolen = loser.cards.select_related("card_type").filter(is_used=False).order_by("?").first()
+        if stolen:
+            # Your inventory relation is me.cards, so card likely has FK to player model named "player"
+            # We try common names safely.
+            if hasattr(stolen, "player_id"):
+                stolen.player = winner
+            elif hasattr(stolen, "owner_id"):
+                stolen.owner = winner
+            else:
+                return _json_err(game, request, "Card model has no owner/player field.", status=500)
+
+            stolen.save()
+            effects["extra"]["duel"]["stolen_card_id"] = stolen.id
+            effects["extra"]["duel"]["stolen_card_code"] = stolen.card_type.code
+        else:
+            effects["extra"]["duel"]["no_card_to_steal"] = True
+
+    # Clear duel and end turn
+    game.pending_duel = None
+    game.save(update_fields=["pending_duel"])
+    _end_turn_safely(game)
+
+    return _json_ok(game, request, extra={"effects": effects, "resolved": True})

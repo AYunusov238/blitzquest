@@ -65,6 +65,13 @@ class Game(models.Model):
     # When set, question is active and MUST be answered by for_player_id before turn advances
     pending_question = models.JSONField(null=True, blank=True)
 
+    # When set, shop is open and MUST be closed by for_player_id before turn advances
+    pending_shop = models.JSONField(null=True, blank=True)
+
+    # When set, duel is active between players
+    pending_duel = models.JSONField(null=True, blank=True)
+
+
     def __str__(self) -> str:
         return f"Game {self.code} ({self.get_status_display()})"
 
@@ -123,6 +130,57 @@ class Game(models.Model):
                 return False
 
         return False
+    
+    def sync_turn_to_pending_shop(self) -> bool:
+        """
+        If there is a pending shop, ensure current_turn_index points to
+        the player who must close it.
+        Returns True if changed.
+        """
+        ps = self.pending_shop
+        if not ps:
+            return False
+
+        pid = ps.get("for_player_id")
+        if not pid:
+            return False
+
+        players = list(self.players_by_turn_order)
+        if not players:
+            return False
+
+        for idx, p in enumerate(players):
+            if p.id == pid:
+                if self.current_turn_index != idx:
+                    self.current_turn_index = idx
+                    self.save(update_fields=["current_turn_index"])
+                    return True
+                return False
+
+        return False
+
+    # ---------------------------
+    # NEW: keep turn locked to pending duel owner
+    # ---------------------------
+    def sync_turn_to_pending_duel(self) -> bool:
+        pd = self.pending_duel
+        if not pd:
+            return False
+
+        initiator_id = pd.get("initiator_id") or pd.get("for_player_id")
+        if not initiator_id:
+            return False
+
+        players = list(self.players_by_turn_order)
+        for idx, p in enumerate(players):
+            if p.id == initiator_id:
+                if self.current_turn_index != idx:
+                    self.current_turn_index = idx
+                    self.save(update_fields=["current_turn_index"])
+                    return True
+                return False
+        return False
+
 
     def to_public_state(self, for_user=None):
         """
@@ -133,6 +191,8 @@ class Game(models.Model):
         # Ensure consistency: if question is pending, lock turn to that player
         # (safe + doesn't change game logic; just prevents drift)
         self.sync_turn_to_pending_question()
+        self.sync_turn_to_pending_shop()
+        self.sync_turn_to_pending_duel()
 
         # Players list
         players_qs = self.players.select_related("user").order_by("turn_order")
@@ -163,6 +223,18 @@ class Game(models.Model):
                     "prompt": self.pending_question.get("prompt"),
                     "choices": self.pending_question.get("choices", []),
                     "changed_once": bool(self.pending_question.get("changed_once")),
+                }
+
+        shop_payload = None
+        shop_for_player_id = None
+        shop_active = bool(self.pending_shop)
+
+        if self.pending_shop:
+            shop_for_player_id = self.pending_shop.get("for_player_id")
+            if me is not None and shop_for_player_id == me.id:
+                shop_payload = {
+                    "shop_level": self.pending_shop.get("shop_level", 1),
+                    "offers": self.pending_shop.get("offers", []),
                 }
 
         players_payload = []
@@ -214,7 +286,58 @@ class Game(models.Model):
             "pending_question": pending_payload,
             "pending_question_active": pending_active,
             "pending_question_for_player_id": pending_for_player_id,
+            "pending_shop": shop_payload,
+            "pending_shop_active": shop_active,
+            "pending_shop_for_player_id": shop_for_player_id,
         }
+        
+        # ----------------------------
+        # Pending Duel (Prediction Duel)
+        # ----------------------------
+        duel_payload = None
+        duel_active = bool(self.pending_duel)
+        duel_for_player_ids = []
+
+        if self.pending_duel:
+            initiator_id = self.pending_duel.get("initiator_id") or self.pending_duel.get(
+                "for_player_id"
+            )
+            opponent_id = self.pending_duel.get("opponent_id")
+            duel_for_player_ids = [pid for pid in [initiator_id, opponent_id] if pid]
+
+            # Reveal duel only to participants
+            if me is not None and me.id in duel_for_player_ids:
+                status = self.pending_duel.get("status")
+                reveal = self.pending_duel.get("reveal")
+
+                choices = self.pending_duel.get("choices") or {}
+                predictions = self.pending_duel.get("predictions") or {}
+
+                you_committed = str(me.id) in choices
+                you_predicted = str(me.id) in predictions
+
+                # Hide reveal unless resolved or winner-choice phase
+                if status not in ["winner_choice", "resolved"]:
+                    reveal = None
+
+                duel_payload = {
+                    "type": self.pending_duel.get("type", "prediction"),
+                    "status": status,  # "choose_opponent" | "commit" | "predict" | "winner_choice" | "resolved"
+                    "initiator_id": initiator_id,
+                    "opponent_id": opponent_id,
+                    "tile_position": self.pending_duel.get("tile_position"),
+                    "you_committed": you_committed,
+                    "you_predicted": you_predicted,
+                    "winner_id": self.pending_duel.get("winner_id"),
+                    "loser_id": self.pending_duel.get("loser_id"),
+                    "is_draw": bool(self.pending_duel.get("is_draw", False)),
+                    "reveal": reveal,
+                }
+
+        payload["pending_duel"] = duel_payload
+        payload["pending_duel_active"] = duel_active
+        payload["pending_duel_for_player_ids"] = duel_for_player_ids
+
 
         # --- Support cards inventory ---
         if me is not None:
@@ -466,62 +589,111 @@ class Game(models.Model):
             return effects
 
         if t == BoardTile.TileType.DUEL:
-            other_players = list(self.players.filter(is_alive=True).exclude(id=player.id))
-            if not other_players:
-                effects.setdefault("extra", {})
-                effects["extra"]["no_opponent"] = True
-                return effects
+            # Pause the game and start duel via UI.
+            if not self.pending_duel:
+                self.pending_duel = {
+                    "type": "prediction",
+                    "status": "choose_opponent",  # initiator must pick opponent first
+                    "for_player_id": player.id,   # initiator (used for turn lock)
+                    "initiator_id": player.id,
+                    "opponent_id": None,
+                    "tile_position": int(getattr(tile, "position", player.position) or player.position),
+                    "choices": {},       # { "<player_id>": "attack|defend|bluff" }
+                    "predictions": {},   # { "<player_id>": "attack|defend|bluff" }
+                    "winner_id": None,
+                    "loser_id": None,
+                    "is_draw": False,
+                    "reveal": None,
+                }
 
-            opponent = _r.choice(other_players)
+                # lock turn to initiator while duel is active
+                players = list(self.players.order_by("turn_order"))
+                for idx, p in enumerate(players):
+                    if p.id == player.id:
+                        self.current_turn_index = idx
+                        break
 
-            cfg = cfg or {}
-            reward_coins = int(cfg.get("reward_coins", 2) or 2)
-            penalty_hp = int(cfg.get("penalty_hp", 1) or 1)
-            if penalty_hp < 0:
-                penalty_hp = abs(penalty_hp)
+                self.save(update_fields=["pending_duel", "current_turn_index"])
 
-            effects.setdefault("extra", {})
-            win = _r.choice([True, False])
-            effects["extra"]["opponent_id"] = opponent.id
-            effects["extra"]["won_duel"] = win
-
-            if win:
-                player.coins = int(player.coins or 0) + reward_coins
-                player.save(update_fields=["coins"])
-                effects["coins_delta"] = effects.get("coins_delta", 0) + reward_coins
-
-                dmg_result = self.apply_damage(opponent, penalty_hp, effects, source="duel")
-                if dmg_result.get("died"):
-                    effects["extra"]["opponent_died"] = True
-
-            else:
-                dmg_result = self.apply_damage(player, penalty_hp, effects, source="duel")
-                if dmg_result.get("died"):
-                    effects["extra"]["died"] = True
-
+            effects["extra"]["duel_triggered"] = True
             return effects
 
         if t == BoardTile.TileType.SHOP:
-            cost = cfg.get("cost", 2)
-            hp_gain = cfg.get("hp_gain", 1)
+            # Pause the game and open the shop UI. Purchases/sales happen via API.
+            if not self.pending_shop:
+                shop_level = int(cfg.get("shop_level", 1) or 1)
+                shop_level = max(1, min(shop_level, 3))
 
-            if player.coins >= cost:
-                player.coins -= cost
-                player.hp += hp_gain
-                player.save(update_fields=["coins", "hp"])
+                # Offer size by level
+                offer_count = {1: 3, 2: 4, 3: 5}.get(shop_level, 3)
 
-                effects["coins_delta"] = -cost
-                effects["hp_delta"] = hp_gain
-                effects["extra"]["bought"] = True
-            else:
-                effects["extra"]["not_enough_coins"] = True
+                active_types = list(SupportCardType.objects.filter(is_active=True))
+                if active_types:
+                    picked = _r.sample(active_types, k=min(offer_count, len(active_types)))
+                else:
+                    picked = []
 
+                offers = []
+                for ct in picked:
+                    offers.append(
+                        {
+                            "card_type_id": ct.id,
+                            "name": ct.name,
+                            "code": ct.code,
+                            "description": ct.description,
+                            "effect_type": ct.effect_type,
+                            "cost": self.support_card_cost(ct),
+                        }
+                    )
+
+                self.pending_shop = {
+                    "for_player_id": player.id,
+                    "shop_level": shop_level,
+                    "offers": offers,
+                }
+
+                # lock turn to the same player who must close the shop
+                players = list(self.players.order_by("turn_order"))
+                for idx, p in enumerate(players):
+                    if p.id == player.id:
+                        self.current_turn_index = idx
+                        break
+
+                self.save(update_fields=["pending_shop", "current_turn_index"])
+
+            effects["extra"]["shop_triggered"] = True
             return effects
 
         if t == BoardTile.TileType.FINISH:
             return effects
 
         return effects
+
+    def support_card_cost(self, card_type: "SupportCardType") -> int:
+        """Compute an in-game coin price for a support card type."""
+        et = getattr(card_type, "effect_type", None)
+        base = {
+            SupportCardType.EffectType.BONUS_COIN: 2,
+            SupportCardType.EffectType.MOVE_EXTRA: 3,
+            SupportCardType.EffectType.REROLL: 3,
+            SupportCardType.EffectType.HEAL: 4,
+            SupportCardType.EffectType.SHIELD: 4,
+            SupportCardType.EffectType.SWAP_POSITION: 5,
+            SupportCardType.EffectType.CHANGE_QUESTION: 5,
+        }.get(et, 3)
+
+        params = getattr(card_type, "params", None) or {}
+        try:
+            if et == SupportCardType.EffectType.SHIELD:
+                points = int(params.get("points", 2) or 2)
+                base += max(0, points - 2)
+            if et == SupportCardType.EffectType.MOVE_EXTRA:
+                max_steps = int(params.get("max_steps", 3) or 3)
+                base += 1 if max_steps >= 4 else 0
+        except Exception:
+            pass
+
+        return max(1, int(base))
 
     def apply_damage(self, player, damage: int, effects: dict | None = None, *, source: str | None = None):
         dmg = max(0, int(damage or 0))
@@ -622,8 +794,14 @@ class Game(models.Model):
         if self.pending_question:
             self.sync_turn_to_pending_question()
 
+        if self.pending_shop:
+            self.sync_turn_to_pending_shop()
+
+        if self.pending_duel:
+            self.sync_turn_to_pending_duel()
+
         # If player did not win, go to next player's turn
-        if not move_result["won"] and not self.pending_question:
+        if not move_result["won"] and not self.pending_question and not self.pending_shop and not self.pending_duel:
             if getattr(player, "extra_rolls", 0) > 0:
                 player.extra_rolls -= 1
                 player.save(update_fields=["extra_rolls"])

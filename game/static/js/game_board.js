@@ -20,6 +20,73 @@ function escapeHtml(str) {
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
 }
+function getCSRFToken() {
+    // Django default cookie name:
+    const name = "csrftoken";
+    const cookies = document.cookie ? document.cookie.split(";") : [];
+    for (let c of cookies) {
+        c = c.trim();
+        if (c.startsWith(name + "=")) return decodeURIComponent(c.substring(name.length + 1));
+    }
+    return "";
+}
+
+function getGameIdFromPage() {
+    // 1) if you already set window.GAME_ID, use it
+    if (typeof window.GAME_ID !== "undefined" && window.GAME_ID) return window.GAME_ID;
+
+    // 2) try data-game-id on body or board root
+    const el =
+        document.querySelector("[data-game-id]") ||
+        document.body;
+
+    const v = el ? el.getAttribute("data-game-id") : null;
+    if (v && /^\d+$/.test(v)) return Number(v);
+
+    // 3) parse from URL like /games/69/...
+    const m = window.location.pathname.match(/\/games\/(\d+)\b/);
+    if (m) return Number(m[1]);
+
+    return null;
+}
+
+async function safeJson(res) {
+    try {
+        return await res.json();
+    } catch {
+        return null;
+    }
+}
+/**
+ * Applies server response after buy/sell/close.
+ * Expected shape: { game_state: ... }
+ * This tries to integrate with your existing code:
+ * - If you have a function like renderGameState(state), it uses it.
+ * - If you have a global setter, it uses it.
+ */
+async function applyGameStateUpdate(payload) {
+    const state = payload && payload.game_state ? payload.game_state : null;
+    if (!state) return;
+
+    // If your code keeps a global `GAME_STATE`, update it
+    window.GAME_STATE = state;
+
+    // If you already have a renderer, call it
+    if (typeof window.renderGameState === "function") {
+        window.renderGameState(state);
+    } else if (typeof window.updateUIFromState === "function") {
+        window.updateUIFromState(state);
+    } else if (typeof window.onGameState === "function") {
+        window.onGameState(state);
+    }
+
+    if (state.pending_shop) {
+        showShopModal(state.pending_shop, state);
+    } else {
+        hideShopModal();
+    }
+}
+// ---------- UI: question modal ----------
 function showQuestionModal(q, state) {
   const modal = document.getElementById("questionModal");
   const prompt = document.getElementById("qPrompt");
@@ -44,15 +111,17 @@ function showQuestionModal(q, state) {
     : null;
 
   // header button behavior
-  if (!canChange) {
-    changeBtn.textContent = "🔄 Used";
-    changeBtn.disabled = true;
-  } else if (!changeCard) {
-    changeBtn.textContent = "🔄 No card";
-    changeBtn.disabled = true;
-  } else {
-    changeBtn.textContent = "🔄 Change";
-    changeBtn.disabled = false;
+  if (changeBtn){
+    if (!canChange) {
+      changeBtn.textContent = "🔄 Used";
+      changeBtn.disabled = true;
+    } else if (!changeCard) {
+      changeBtn.textContent = "🔄 No card";
+      changeBtn.disabled = true;
+    } else {
+      changeBtn.textContent = "🔄 Change";
+      changeBtn.disabled = false;
+    }
   }
 
   changeBtn.onclick = async () => {
@@ -128,6 +197,7 @@ function showQuestionModal(q, state) {
           renderPlayerTokens(data.game_state);
           renderQuestionUI(data.game_state);
           renderInventoryUI(data.game_state);
+
         } else {
           fetchGameState(gameId);
         }
@@ -161,6 +231,552 @@ function renderQuestionUI(state) {
         showQuestionModal(state.pending_question, state);
     } else {
         hideQuestionModal();
+    }
+}
+
+let SHOP_IS_OPEN = false;
+
+/**
+ * Opens the shop modal for the current player.
+ * @param {Object} pendingShop - state.pending_shop (only present for the owning player)
+ * @param {Object} gameState - whole game_state (used to show coins + inventory)
+ */
+function showShopModal(pendingShop, gameState) {
+    const modal = document.getElementById("shopModal");
+    if (!modal) return;
+
+    SHOP_IS_OPEN = true;
+
+    // show modal
+    modal.classList.remove("is-hidden");
+    modal.setAttribute("aria-hidden", "false");
+
+    // fill coins
+    const coinsEl = document.getElementById("sCoins");
+    if (coinsEl) {
+        const me = (gameState && Array.isArray(gameState.players)) ? gameState.players.find(p => p.is_you) : null;
+        coinsEl.textContent = me && typeof me.coins !== "undefined" ? me.coins : "0";
+    }
+
+    // clear feedback
+    const feedback = document.getElementById("shopFeedback");
+    if (feedback) feedback.textContent = "";
+
+    // render offers
+    const offersWrap = document.getElementById("shopOffers");
+    if (offersWrap) {
+        offersWrap.innerHTML = "";
+        const offers = (pendingShop && pendingShop.offers) ? pendingShop.offers : [];
+
+        if (!offers.length) {
+            offersWrap.innerHTML = `<div class="muted">No items available.</div>`;
+        } else {
+            offers.forEach((o) => {
+                const name = o.name || o.code || "Card";
+                const desc = o.description || "";
+                const cost = Number(o.cost || 0);
+
+                const row = document.createElement("div");
+                row.className = "soffer";
+
+                row.innerHTML = `
+                    <div>
+                        <div class="soffer-title">${escapeHtml(name)}</div>
+                        <div class="soffer-desc">${escapeHtml(desc)}</div>
+                    </div>
+                    <div class="soffer-meta">
+                        <span class="sprice">🪙 ${cost}</span>
+                        <button type="button" class="qhead-btn" data-buy="${o.card_type_id}">
+                            Buy
+                        </button>
+                    </div>
+                `;
+
+                offersWrap.appendChild(row);
+            });
+        }
+    }
+
+    // render sell list from inventory (server exposes `your_cards` at top-level)
+    const sellWrap = document.getElementById("shopSellList");
+    if (sellWrap) {
+        sellWrap.innerHTML = "";
+        const inv = (gameState && Array.isArray(gameState.your_cards)) ? gameState.your_cards : [];
+
+        if (!inv.length) {
+            sellWrap.innerHTML = `<div class="muted">You have no cards to sell.</div>`;
+        } else {
+            inv.forEach((c) => {
+                const instId = c.id;
+                const title = c.name || c.code || "Card";
+                const desc = c.description || "";
+
+                const row = document.createElement("div");
+                row.className = "soffer";
+                row.innerHTML = `
+                    <div>
+                        <div class="soffer-title">${escapeHtml(title)}</div>
+                        <div class="soffer-desc">${escapeHtml(desc)}</div>
+                    </div>
+                    <div class="soffer-meta">
+                        <button type="button" class="qhead-btn" data-sell="${instId}">
+                            Sell
+                        </button>
+                    </div>
+                `;
+                sellWrap.appendChild(row);
+            });
+        }
+    }
+
+    // bind handlers (event delegation, safe to re-call)
+    modal.onclick = async (e) => {
+        const btn = e.target.closest("button");
+        if (!btn) return;
+
+        // buy
+        const buyId = btn.getAttribute("data-buy");
+        if (buyId) {
+            await shopBuyCard(Number(buyId));
+            return;
+        }
+
+        // sell
+        const sellId = btn.getAttribute("data-sell");
+        if (sellId) {
+            await shopSellCard(Number(sellId));
+            return;
+        }
+    };
+
+    // close button (end turn)
+    const closeBtn = document.getElementById("shopCloseBtn");
+    if (closeBtn) {
+        closeBtn.onclick = async () => {
+            await shopClose();
+        };
+    }
+
+    // Optional: block closing via ESC / backdrop (turn should be locked)
+    // If you want backdrop close, uncomment:
+    // modal.querySelector(".smodal-backdrop")?.addEventListener("click", () => {});
+}
+
+/**
+ * Closes the shop modal UI only.
+ * (Backend close + turn advance should happen via shopClose() endpoint.)
+ */
+function hideShopModal() {
+    const modal = document.getElementById("shopModal");
+    if (!modal) return;
+
+    SHOP_IS_OPEN = false;
+
+    modal.classList.add("is-hidden");
+    modal.setAttribute("aria-hidden", "true");
+
+    // cleanup content to avoid stale offers after refresh
+    const offersWrap = document.getElementById("shopOffers");
+    if (offersWrap) offersWrap.innerHTML = "";
+
+    const sellWrap = document.getElementById("shopSellList");
+    if (sellWrap) sellWrap.innerHTML = "";
+
+    const feedback = document.getElementById("shopFeedback");
+    if (feedback) feedback.textContent = "";
+}
+
+async function shopBuyCard(cardTypeId) {
+    const feedback = document.getElementById("shopFeedback");
+    if (feedback) feedback.textContent = "";
+
+    const gameId = getGameIdFromPage();
+    if (!gameId) {
+        if (feedback) feedback.textContent = "Cannot detect game id.";
+        return;
+    }
+
+    try {
+        const res = await fetch(`/games/${gameId}/shop/buy/`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-CSRFToken": getCSRFToken(),
+            },
+            body: JSON.stringify({ card_type_id: cardTypeId }),
+        });
+
+        const data = await safeJson(res);
+
+        if (!res.ok) {
+            if (feedback) feedback.textContent = (data && data.detail) ? data.detail : "Failed to buy.";
+            return;
+        }
+
+        // Update UI/state
+        await applyGameStateUpdate(data);
+    } catch (err) {
+        console.error(err);
+        if (feedback) feedback.textContent = "Network error while buying.";
+    }
+}
+
+async function shopSellCard(cardInstanceId) {
+    const feedback = document.getElementById("shopFeedback");
+    if (feedback) feedback.textContent = "";
+
+    const gameId = getGameIdFromPage();
+    if (!gameId) {
+        if (feedback) feedback.textContent = "Cannot detect game id.";
+        return;
+    }
+
+    try {
+        const res = await fetch(`/games/${gameId}/shop/sell/`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-CSRFToken": getCSRFToken(),
+            },
+            body: JSON.stringify({ card_instance_id: cardInstanceId }),
+        });
+
+        const data = await safeJson(res);
+
+        if (!res.ok) {
+            if (feedback) feedback.textContent = (data && data.detail) ? data.detail : "Failed to sell.";
+            return;
+        }
+
+        await applyGameStateUpdate(data);
+    } catch (err) {
+        console.error(err);
+        if (feedback) feedback.textContent = "Network error while selling.";
+    }
+}
+
+async function shopClose() {
+    const feedback = document.getElementById("shopFeedback");
+    if (feedback) feedback.textContent = "";
+
+    const gameId = getGameIdFromPage();
+    if (!gameId) {
+        if (feedback) feedback.textContent = "Cannot detect game id.";
+        return;
+    }
+
+    try {
+        const res = await fetch(`/games/${gameId}/shop/close/`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-CSRFToken": getCSRFToken(),
+            },
+            body: JSON.stringify({}),
+        });
+
+        const data = await safeJson(res);
+
+        if (!res.ok) {
+            if (feedback) feedback.textContent = (data && data.detail) ? data.detail : "Failed to close shop.";
+            return;
+        }
+
+        await applyGameStateUpdate(data);
+
+        // If state says no pending_shop anymore, hide
+        // (applyGameStateUpdate should re-render and hide automatically, but this is safe)
+        hideShopModal();
+    } catch (err) {
+        console.error(err);
+        if (feedback) feedback.textContent = "Network error while closing shop.";
+    }
+}
+
+// ============================
+// Duel Modal helpers
+// ============================
+
+function showDuelModal() {
+  const modal = document.getElementById("duelModal");
+  if (!modal) return;
+
+  modal.classList.remove("is-hidden");
+  modal.setAttribute("aria-hidden", "false");
+
+  // Optional: prevent background scroll (same UX as other modals)
+  document.body.classList.add("modal-open");
+
+  // Clicking the backdrop does NOT close the duel
+  // (duel must resolve to avoid turn-skip bugs).
+  const backdrop = modal.querySelector(".dmodal-backdrop");
+  if (backdrop && !backdrop.dataset.bound) {
+    backdrop.dataset.bound = "1";
+    backdrop.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // Do nothing by design.
+    });
+  }
+
+  // Prevent clicks inside card from bubbling to backdrop
+  const card = modal.querySelector(".dmodal-card");
+  if (card && !card.dataset.bound) {
+    card.dataset.bound = "1";
+    card.addEventListener("click", (e) => e.stopPropagation());
+  }
+
+  // Esc does NOT close (same reason)
+  if (!modal.dataset.escBound) {
+    modal.dataset.escBound = "1";
+    document.addEventListener("keydown", (e) => {
+      const isOpen = !modal.classList.contains("is-hidden");
+      if (!isOpen) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    }, true);
+  }
+}
+
+function hideDuelModal() {
+  const modal = document.getElementById("duelModal");
+  if (!modal) return;
+
+  modal.classList.add("is-hidden");
+  modal.setAttribute("aria-hidden", "true");
+
+  // Optional: restore scroll
+  document.body.classList.remove("modal-open");
+
+  // Clean UI content so stale duel info doesn't flash next time
+  const body = document.getElementById("dBody");
+  if (body) body.innerHTML = "";
+
+  const feedback = document.getElementById("dFeedback");
+  if (feedback) feedback.textContent = "";
+}
+
+// Optional convenience: show a message inside duel modal
+function setDuelFeedback(msg) {
+  const el = document.getElementById("dFeedback");
+  if (!el) return;
+  el.textContent = msg || "";
+}
+
+function renderDuelUI(duel, gameState) {
+    const body = document.getElementById("dBody");
+    const feedback = document.getElementById("dFeedback");
+    if (!body) return;
+
+    body.innerHTML = "";
+    if (feedback) feedback.textContent = "";
+
+    const myId = gameState.you_player_id;
+    const players = gameState.players || [];
+    const getName = (pid) => {
+        const p = players.find(x => x.id === pid);
+        return p ? p.username : `Player ${pid}`;
+    };
+
+    // -------------------------
+    // Phase: choose opponent
+    // -------------------------
+    if (duel.status === "choose_opponent") {
+        body.innerHTML = `
+            <h4 class="dsection-title">Choose an opponent</h4>
+            <div class="dgrid"></div>
+        `;
+        const grid = body.querySelector(".dgrid");
+
+        players.forEach(p => {
+            if (!p.is_alive || p.id === myId) return;
+            const btn = document.createElement("button");
+            btn.className = "dbtn";
+            btn.innerHTML = `<strong>${p.username}</strong><br><small>HP ${p.hp} • Coins ${p.coins}</small>`;
+            btn.onclick = async () => {
+                try {
+                    // UI feedback
+                    if (feedback) feedback.textContent = "Selecting opponent...";
+                    btn.disabled = true;
+
+                    const res = await fetch(`/games/${gameState.id}/duel/select_opponent/`, {
+                        method: "POST",
+                        headers: {
+                            "X-Requested-With": "XMLHttpRequest",
+                            "X-CSRFToken": getCSRFToken(),
+                            "Content-Type": "application/x-www-form-urlencoded",
+                        },
+                        body: `opponent_id=${encodeURIComponent(p.id)}`
+                    });
+
+                    const payload = await safeJson(res);
+
+                    if (!res.ok) {
+                        const msg = (payload && (payload.detail || payload.error)) ? (payload.detail || payload.error) : `Error ${res.status}`;
+                        if (feedback) feedback.textContent = msg;
+                        btn.disabled = false;
+                        return;
+                    }
+
+                    // Apply new server state immediately (no waiting for poll)
+                    await applyGameStateUpdate(payload);
+
+                    // If duel is still pending, re-render duel UI right now
+                    const st = payload && payload.game_state ? payload.game_state : null;
+                    if (st && st.pending_duel) {
+                        showDuelModal();
+                        renderDuelUI(st.pending_duel, st);
+                    }
+
+                    if (feedback) feedback.textContent = "";
+                } catch (e) {
+                    console.error(e);
+                    if (feedback) feedback.textContent = "Network error while selecting opponent.";
+                    btn.disabled = false;
+                }
+            };
+
+            grid.appendChild(btn);
+        });
+        return;
+    }
+
+    // -------------------------
+    // Phase: commit (hidden)
+    // -------------------------
+    if (duel.status === "commit") {
+        body.innerHTML = `
+            <h4 class="dsection-title">Choose your action (hidden)</h4>
+            <div class="dgrid">
+                <button class="dbtn" data-choice="attack">
+                    <strong>Attack</strong><br><small>No cost</small>
+                </button>
+                <button class="dbtn" data-choice="defend">
+                    <strong>Defend</strong><br><small>Cost: 1 coin</small>
+                </button>
+                <button class="dbtn" data-choice="bluff">
+                    <strong>Bluff</strong><br><small>Cost: 1 support card</small>
+                </button>
+            </div>
+        `;
+
+        if (duel.you_committed) {
+            body.innerHTML += `<p class="qfeedback">Waiting for opponent…</p>`;
+            body.querySelectorAll("button").forEach(b => b.disabled = true);
+            return;
+        }
+
+        body.querySelectorAll("button[data-choice]").forEach(btn => {
+            btn.onclick = async () => {
+                await fetch(`/games/${gameState.id}/duel/commit/`, {
+                    method: "POST",
+                    headers: {
+                        "X-CSRFToken": getCSRFToken(),
+                        "Content-Type": "application/x-www-form-urlencoded"
+                    },
+                    body: `choice=${btn.dataset.choice}`
+                });
+            };
+        });
+        return;
+    }
+
+    // -------------------------
+    // Phase: predict
+    // -------------------------
+    if (duel.status === "predict") {
+        body.innerHTML = `
+            <h4 class="dsection-title">Predict opponent’s choice</h4>
+            <div class="dgrid">
+                <button class="dbtn" data-pred="attack">Attack</button>
+                <button class="dbtn" data-pred="defend">Defend</button>
+                <button class="dbtn" data-pred="bluff">Bluff</button>
+            </div>
+        `;
+
+        if (duel.you_predicted) {
+            body.innerHTML += `<p class="qfeedback">Waiting for opponent…</p>`;
+            body.querySelectorAll("button").forEach(b => b.disabled = true);
+            return;
+        }
+
+        body.querySelectorAll("button[data-pred]").forEach(btn => {
+            btn.onclick = async () => {
+                await fetch(`/games/${gameState.id}/duel/predict/`, {
+                    method: "POST",
+                    headers: {
+                        "X-CSRFToken": getCSRFToken(),
+                        "Content-Type": "application/x-www-form-urlencoded"
+                    },
+                    body: `prediction=${btn.dataset.pred}`
+                });
+            };
+        });
+        return;
+    }
+
+    // -------------------------
+    // Phase: winner chooses reward
+    // -------------------------
+    if (duel.status === "winner_choice") {
+        const isWinner = duel.winner_id === myId;
+
+        body.innerHTML = `
+            <h4 class="dsection-title">
+                ${isWinner ? "You won! Choose your reward" : "You lost the duel"}
+            </h4>
+        `;
+
+        if (duel.reveal) {
+            body.innerHTML += `
+                <div class="dreveal">
+                    <div class="drow"><span>${getName(duel.initiator_id)}</span><span>${duel.reveal.initiator_choice}</span></div>
+                    <div class="drow"><span>${getName(duel.opponent_id)}</span><span>${duel.reveal.opponent_choice}</span></div>
+                </div>
+            `;
+        }
+
+        if (!isWinner) {
+            body.innerHTML += `<p class="qfeedback">Waiting for winner to choose reward…</p>`;
+            return;
+        }
+
+        body.innerHTML += `
+            <div class="dgrid">
+                <button class="dbtn" data-act="coins">+3 Coins</button>
+                <button class="dbtn" data-act="hp">-1 HP to opponent</button>
+                <button class="dbtn" data-act="push_back">Push back 1 tile</button>
+                <button class="dbtn" data-act="steal_card">Steal support card</button>
+            </div>
+        `;
+
+        body.querySelectorAll("button[data-act]").forEach(btn => {
+            btn.onclick = async () => {
+                await fetch(`/games/${gameState.id}/duel/choose_reward/`, {
+                    method: "POST",
+                    headers: {
+                        "X-CSRFToken": getCSRFToken(),
+                        "Content-Type": "application/x-www-form-urlencoded"
+                    },
+                    body: `action=${btn.dataset.act}`
+                });
+            };
+        });
+        return;
+    }
+
+    // -------------------------
+    // Phase: resolved / draw
+    // -------------------------
+    if (duel.status === "resolved") {
+        body.innerHTML = `
+            <h4 class="dsection-title">
+                ${duel.is_draw ? "Duel ended in a draw" : "Duel resolved"}
+            </h4>
+            <p class="qfeedback">Turn continues…</p>
+        `;
     }
 }
 
@@ -410,7 +1026,7 @@ function renderInventoryUI(state) {
   if (shieldEl) shieldEl.textContent = state.you_shield_points ?? 0;
   if (extraEl) extraEl.textContent = state.you_extra_rolls ?? 0;
 
-  const cards = Array.isArray(state.your_cards) ? state.your_cards : [];
+    const cards = Array.isArray(state.your_cards) ? state.your_cards : [];
 
   if (cards.length === 0) {
     wrap.innerHTML = `<div class="muted">No cards</div>`;
@@ -486,6 +1102,23 @@ async function fetchGameState(gameId) {
         updateDiceUI(data);
         renderPlayerTokens(data);
         renderInventoryUI(data);
+        renderQuestionUI(data);
+
+
+        if (data.pending_duel) {
+            showDuelModal();
+            // If you have a renderer, call it. If not, skip this line for now.
+            if (typeof renderDuelUI === "function") {
+                renderDuelUI(data.pending_duel, data);
+            }
+        } else {
+            hideDuelModal();
+        }
+
+        if (data.pending_shop){
+          showShopModal(data.pending_shop, data);
+        }
+        else hideShopModal();
 
         // NEW: if game finished -> show congrats popup + stop polling
         if (data && (data.status === "finished" || data.has_winner === true)) {
@@ -671,7 +1304,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (typeof window.GAME_ID === "undefined") return;
 
     fetchGameState(window.GAME_ID);
-    window.__boardInterval = setInterval(function () {
+    window.gamePoller = setInterval(function () {
         fetchGameState(window.GAME_ID);
     }, 2000);
 

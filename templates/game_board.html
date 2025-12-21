@@ -264,6 +264,60 @@
         </div>
     </div>
 </div>
+
+<!-- Shop modal -->
+<div id="shopModal" class="smodal is-hidden" aria-hidden="true">
+  <div class="smodal-backdrop"></div>
+
+  <div class="smodal-card" role="dialog" aria-modal="true" aria-labelledby="smodalTitle">
+    <div class="smodal-header">
+      <div>
+        <h3 id="smodalTitle">Shop</h3>
+        <div class="smodal-subtitle">Coins: <strong id="sCoins">0</strong></div>
+      </div>
+      <button id="shopCloseBtn" class="qhead-btn" type="button">✅ End turn</button>
+    </div>
+
+    <div class="smodal-body">
+      <div class="sgrid">
+        <div class="scol">
+          <h4 class="scol-title">Buy support cards</h4>
+          <div id="shopOffers" class="soffers"></div>
+        </div>
+
+        <div class="scol">
+          <h4 class="scol-title">Sell from your inventory</h4>
+          <div id="shopSellList" class="soffers"></div>
+          <div class="muted" style="margin-top:10px;">Selling removes the card permanently.</div>
+        </div>
+      </div>
+
+      <div id="shopFeedback" class="qfeedback" style="margin-top:12px;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Duel modal (Prediction Duel) -->
+<div id="duelModal" class="dmodal is-hidden" aria-hidden="true">
+  <div class="dmodal-backdrop"></div>
+
+  <div class="dmodal-card" role="dialog" aria-modal="true" aria-labelledby="dmodalTitle">
+    <div class="dmodal-header">
+      <div>
+        <h3 id="dmodalTitle">Prediction Duel</h3>
+        <div id="dSub" class="smodal-subtitle">Make your move</div>
+      </div>
+      <div id="dHeaderRight"></div>
+    </div>
+
+    <div class="dmodal-body">
+      <div id="dBody"></div>
+      <div id="dFeedback" class="qfeedback" style="margin-top:12px;"></div>
+    </div>
+  </div>
+</div>
+
+
 {% endblock %}
 
 {% block extra_js %}
