@@ -1,9 +1,20 @@
 import random
 
-def generate_math_question():
-    a = random.randint(1, 12)
-    b = random.randint(1, 12)
-    op = random.choice(["+", "-", "*"])
+def generate_math_question(difficulty="normal"):
+    if difficulty == "easy":
+        a = random.randint(1, 12)
+        b = random.randint(1, 12)
+        ops = ["+", "-", "*"]
+    elif difficulty == "hard":
+        a = random.randint(10, 99)
+        b = random.randint(10, 99)
+        ops = ["+", "-", "*"]
+    else:  # normal
+        a = random.randint(1, 30)
+        b = random.randint(1, 30)
+        ops = ["+", "-", "*"]
+
+    op = random.choice(ops)
 
     if op == "+":
         correct = a + b
@@ -15,8 +26,11 @@ def generate_math_question():
     correct_str = str(correct)
 
     wrongs = set()
+    spread = 5 if difficulty == "easy" else (15 if difficulty == "normal" else 40)
     while len(wrongs) < 3:
-        wrongs.add(str(correct + random.randint(-5, 5)))
+        cand = correct + random.randint(-spread, spread)
+        if cand != correct:
+            wrongs.add(str(cand))
 
     choices = list(wrongs)[:3] + [correct_str]
     random.shuffle(choices)

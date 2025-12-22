@@ -839,6 +839,7 @@ function updateBoardUI(state) {
             case "duel":      label = "Duel"; break;
             case "shop":      label = "Shop"; break;
             default:          label = ""; break;
+            case "portal":    label = "Portal"; break;
         }
         }
 
@@ -847,6 +848,9 @@ function updateBoardUI(state) {
 
         if (type === "bonus") {
             labelHtml = `<div class="board-tile-symbol">🎁</div>`;
+        }
+        if (type === "portal") {
+            labelHtml = `<div class="board-tile-symbol">🌀</div>`;
         }
 
         // ... (keep rest of tile map logic)
@@ -1201,7 +1205,9 @@ async function handleRollClick(e) {
             }
             if (tileEffect.extra && tileEffect.extra.died) text += " You died.";
             if (tileEffect.extra && tileEffect.extra.opponent_died) text += " Opponent died.";
-
+            if (move.teleported) {
+                text += " 🌀 Teleported to Start!";
+            }
             const p = document.createElement("p");
             p.textContent = text;
             logEl.prepend(p);
@@ -1272,6 +1278,9 @@ function renderPlayerTokens(gameState) {
         const tile = document.querySelector(
             `.board-tile[data-position="${tileIndex}"]`
         );
+        if (tile && tile.classList.contains("board-tile-portal")) {
+            return;
+        }
         if (!tile) return;
 
         let tokenContainer = tile.querySelector(".tile-tokens");

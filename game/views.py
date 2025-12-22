@@ -36,31 +36,126 @@ def generate_game_code(length: int = 6) -> str:
     alphabet = string.ascii_uppercase + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
+SURVIVAL_LEN = 35
+
+def _tile_weights_for(game: Game):
+    # Base weights (Normal)
+    weights = {
+        BoardTile.TileType.QUESTION: 3,
+        BoardTile.TileType.TRAP: 2,
+        BoardTile.TileType.HEAL: 2,
+        BoardTile.TileType.BONUS: 2,
+        BoardTile.TileType.WARP: 1,
+        BoardTile.TileType.MASS_WARP: 1,
+        BoardTile.TileType.DUEL: 1,
+        BoardTile.TileType.SHOP: 1,
+        BoardTile.TileType.SAFE: 1,
+    }
+
+    if game.mode != Game.Mode.SURVIVAL:
+        return weights
+
+    diff = game.survival_difficulty
+
+    if diff == Game.SurvivalDifficulty.EASY:
+        # “all tiles except mass warp and trap”
+        weights.pop(BoardTile.TileType.MASS_WARP, None)
+        weights.pop(BoardTile.TileType.TRAP, None)
+        weights[BoardTile.TileType.BONUS] = 4  # bonus more
+        weights[BoardTile.TileType.HEAL] = 3
+
+    elif diff == Game.SurvivalDifficulty.HARD:
+        weights[BoardTile.TileType.BONUS] = 1  # bonus less
+        weights[BoardTile.TileType.HEAL] = 1
+        weights[BoardTile.TileType.TRAP] = 4   # traps more impactful
+        weights[BoardTile.TileType.QUESTION] = 4
+
+    return weights
 
 def create_default_board_for_game(game: Game, enabled_tiles=None):
+    # ✅ IMPORTANT: clear old tiles
+    game.tiles.all().delete()
+
+    # Decide board length
+    if game.mode == Game.Mode.SURVIVAL:
+        game.board_length = SURVIVAL_LEN
+        game.save(update_fields=["board_length"])
+        board_len = SURVIVAL_LEN
+    else:
+        board_len = int(game.board_length or 36)
+
     enabled_tiles = enabled_tiles if enabled_tiles is not None else (game.enabled_tiles or [])
 
     if not enabled_tiles:
         enabled_tiles = [
             value for (value, _label) in BoardTile.TileType.choices
-            if value not in (BoardTile.TileType.START, BoardTile.TileType.FINISH, BoardTile.TileType.SAFE)
+            if value not in (BoardTile.TileType.START, BoardTile.TileType.FINISH, BoardTile.TileType.PORTAL)
         ]
 
+    weights_map = _tile_weights_for(game)
+    # never randomly generate portal
+    weights_map.pop(BoardTile.TileType.PORTAL, None)
+
+    allowed = [t for t in weights_map.keys() if (t in enabled_tiles or t == BoardTile.TileType.SAFE)]
+    weights = [weights_map[t] for t in allowed]
+
     tiles = []
-    last_index = game.board_length - 1
+    last_index = board_len - 1
 
-    for pos in range(game.board_length):
+    for pos in range(board_len):
         if pos == 0:
-            tile_type = BoardTile.TileType.START
-        elif pos == last_index:
-            tile_type = BoardTile.TileType.FINISH
-        else:
-            tile_type = random.choice(enabled_tiles)
+            tiles.append(BoardTile(game=game, position=pos, tile_type=BoardTile.TileType.START, label="START"))
+            continue
 
-        tiles.append(BoardTile(game=game, position=pos, tile_type=tile_type))
+        # Finish Line end
+        if game.mode == Game.Mode.FINISH and pos == last_index:
+            tiles.append(BoardTile(game=game, position=pos, tile_type=BoardTile.TileType.FINISH, label="FINISH"))
+            continue
+
+        # Survival portal at last tile
+        if game.mode == Game.Mode.SURVIVAL and pos == last_index:
+            tiles.append(BoardTile(game=game, position=pos, tile_type=BoardTile.TileType.PORTAL, label="PORTAL"))
+            continue
+
+        tile_type = random.choices(allowed, weights=weights, k=1)[0]
+
+        value_int = None
+        label = ""
+
+        if tile_type == BoardTile.TileType.TRAP:
+            if game.mode == Game.Mode.SURVIVAL and game.survival_difficulty == Game.SurvivalDifficulty.HARD:
+                value_int = -random.randint(3, 5)
+                label = "TRAP (HARD)"
+            else:
+                value_int = -random.randint(1, 2)
+                label = "TRAP"
+
+        elif tile_type == BoardTile.TileType.HEAL:
+            if game.mode == Game.Mode.SURVIVAL and game.survival_difficulty == Game.SurvivalDifficulty.HARD:
+                value_int = random.randint(1, 2)
+                label = "HEAL (≤2)"
+            else:
+                value_int = random.randint(1, 3)
+                label = "HEAL"
+
+        elif tile_type == BoardTile.TileType.BONUS:
+            label = "BONUS"
+        elif tile_type == BoardTile.TileType.QUESTION:
+            label = "Q"
+        elif tile_type == BoardTile.TileType.MASS_WARP:
+            label = "MASS WARP"
+        elif tile_type == BoardTile.TileType.WARP:
+            label = "WARP"
+        elif tile_type == BoardTile.TileType.DUEL:
+            label = "DUEL"
+        elif tile_type == BoardTile.TileType.SHOP:
+            label = "SHOP"
+        elif tile_type == BoardTile.TileType.SAFE:
+            label = "SAFE"
+
+        tiles.append(BoardTile(game=game, position=pos, tile_type=tile_type, value_int=value_int, label=label))
 
     BoardTile.objects.bulk_create(tiles)
-
 
 def home(request):
     return render(request, "home.html")
@@ -93,7 +188,7 @@ def game_create(request):
             game.host = request.user
             game.save()
 
-            create_default_board_for_game(game, enabled_tiles=game.enabled_tiles)
+            # create_default_board_for_game(game, enabled_tiles=game.enabled_tiles)
 
             PlayerInGame.objects.create(
                 game=game,
@@ -277,7 +372,10 @@ def game_start(request, game_id: int):
         return redirect("game:game_detail", game_id=game.id)
 
     seed_support_cards()
-    game.generate_random_board()
+    if game.mode == Game.Mode.SURVIVAL:
+        create_default_board_for_game(game, enabled_tiles=game.enabled_tiles)
+    else:
+        game.generate_random_board()
 
     game.current_turn_index = 0
     game.status = Game.Status.ACTIVE

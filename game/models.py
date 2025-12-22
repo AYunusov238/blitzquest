@@ -43,7 +43,7 @@ class Game(models.Model):
     )
     max_players = models.PositiveSmallIntegerField(default=4)
     board_length = models.PositiveSmallIntegerField(
-        default=50,
+        default=36,
         help_text="Number of tiles on the board (including start/finish).",
     )
 
@@ -99,6 +99,74 @@ class Game(models.Model):
 
         index = self.current_turn_index % len(players)
         return players[index]
+    
+    class SurvivalDifficulty(models.TextChoices):
+        EASY = "easy", "Easy"
+        NORMAL = "normal", "Normal"
+        HARD = "hard", "Hard"
+
+    survival_difficulty = models.CharField(
+        max_length=16,
+        choices=SurvivalDifficulty.choices,
+        default=SurvivalDifficulty.NORMAL,
+    )
+    def apply_survival_move(self, player, dice_value: int) -> dict:
+        board_size = self.tiles.count() or 35
+        portal_pos = board_size - 1
+        cycle = board_size - 1  # ✅ landing positions are 0..cycle-1; portal is never landed
+
+        from_pos = int(player.position or 0)
+        raw = from_pos + int(dice_value)
+
+        laps = raw // cycle
+        to_pos = raw % cycle
+
+        # Lap rewards (each portal pass)
+        if laps > 0:
+            player.hp = int(player.hp or 0) + laps * 1
+            player.coins = int(player.coins or 0) + laps * 2
+
+        player.position = to_pos
+        player.save(update_fields=["position", "hp", "coins"])
+
+        landed_tile = self.tiles.filter(position=to_pos).first()
+        tile_effect = None
+        if landed_tile:
+            tile_effect = self.execute_tile_effect(player, landed_tile)
+
+        self.check_survival_winner()
+
+        return {
+            "from_position": from_pos,
+            "to_position": to_pos,
+            "dice_value": dice_value,
+            "laps": laps,
+            "portal_position": portal_pos,
+            "teleported": (laps > 0),  # crossed portal at least once
+            "lap_reward": {"hp": laps * 1, "coins": laps * 2} if laps else None,
+            "landed_tile_type": landed_tile.tile_type if landed_tile else None,
+            "tile_effect": tile_effect,
+            "won": self.status == self.Status.FINISHED,
+        }
+
+    def check_survival_winner(self):
+        if self.mode != self.Mode.SURVIVAL:
+            return
+
+        alive = list(self.players.filter(is_alive=True))
+        if len(alive) == 1:
+            self.status = self.Status.FINISHED
+            self.winner = alive[0]
+            self.save(update_fields=["status", "winner"])
+
+    def clean(self):
+        # Survival is always 35 tiles
+        if self.mode == self.Mode.SURVIVAL:
+            self.board_length = 35
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
 
     # ---------------------------
     # NEW: keep turn locked to pending question owner
@@ -435,6 +503,9 @@ class Game(models.Model):
 
         if t == BoardTile.TileType.SAFE or t == BoardTile.TileType.START:
             return effects
+        
+        if tile.tile_type == BoardTile.TileType.PORTAL:
+            return {"type": "portal", "skipped": True}
 
         if t == BoardTile.TileType.TRAP:
             hp_delta = value if value is not None else cfg.get("hp_delta", -1)
@@ -479,7 +550,11 @@ class Game(models.Model):
         if t == BoardTile.TileType.QUESTION:
             # Pause the game and ask via UI. Do not auto-reward.
             if not self.pending_question:
-                self.pending_question = { **generate_math_question(), "for_player_id": player.id }
+                diff = "normal"
+                if self.mode == self.Mode.SURVIVAL:
+                    diff = self.survival_difficulty  # "easy"|"normal"|"hard"
+
+                self.pending_question = { **generate_math_question(diff), "for_player_id": player.id }
 
                 # lock turn to the same player who must answer
                 players = list(self.players.order_by("turn_order"))
@@ -788,7 +863,10 @@ class Game(models.Model):
     def roll_and_apply_for(self, player):
         dice = _r.randint(1, 6)
 
-        move_result = self.apply_basic_move(player, dice_value=dice)
+        if self.mode == self.Mode.SURVIVAL:
+            move_result = self.apply_survival_move(player, dice_value=dice)
+        else:
+            move_result = self.apply_basic_move(player, dice_value=dice)
 
         # If a question is pending, hard-lock turn to that player
         if self.pending_question:
@@ -1003,6 +1081,8 @@ class BoardTile(models.Model):
         SHOP = "shop", "Shop"
 
         SAFE = "safe", "Safe"
+
+        PORTAL = "portal", "Portal" 
 
     game = models.ForeignKey(
         Game,
