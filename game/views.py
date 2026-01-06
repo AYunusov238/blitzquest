@@ -699,13 +699,23 @@ def answer_question(request, game_id: int):
     game.sync_turn_to_pending_question()
 
     try:
-        body = json.loads(request.body.decode("utf-8"))
-        choice_index = int(body.get("choice_index"))
+        body = json.loads(request.body.decode("utf-8") or "{}")
     except Exception:
         return JsonResponse({"detail": "Invalid payload."}, status=400)
 
+    is_timeout = bool(body.get("timeout", False))
+
+    if is_timeout:
+        choice_index = None
+    else:
+        try:
+            choice_index = int(body.get("choice_index"))
+        except Exception:
+            return JsonResponse({"detail": "Invalid payload."}, status=400)
+
+
     correct_index = int(pq.get("correct_index"))
-    is_correct = (choice_index == correct_index)
+    is_correct = (False if is_timeout else (choice_index == correct_index))
 
     # Rewards:
     # Correct: +1 coin
@@ -725,7 +735,7 @@ def answer_question(request, game_id: int):
 
     return JsonResponse({
         "action": "answer_question",
-        "result": {"correct": is_correct},
+        "result": {"correct": is_correct, "timeout": is_timeout},
         "game_state": state,
     })
 

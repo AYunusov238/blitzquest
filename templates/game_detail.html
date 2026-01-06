@@ -61,21 +61,22 @@
                         <span class="game-code-label">Lobby code</span>
                         <span class="game-code-value">{{ game.code }}</span>
                     </div>
-
-                    {% if can_start %}
-                        <form method="post" action="{% url 'game:game_start' game.id %}">
-                            {% csrf_token %}
-                            <button type="submit" class="btn btn-primary">Start game</button>
-                        </form>
-                    {% elif is_host %}
-                        <div class="game-hint">
-                            Waiting for more players. Need at least <strong>2</strong> to start.
-                        </div>
-                    {% else %}
-                        <div class="game-hint">
-                            Waiting for the host to start the game.
+                    <!-- Inside game_detail.html -->
+                    {% if is_host %}
+                        <div id="host-start-wrap">
+                            {% if players.count >= 2 %}
+                                <form id="start-game-form" method="post" action="{% url 'game:game_start' game.id %}">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-primary">Start game</button>
+                                </form>
+                            {% else %}
+                                <div class="game-hint" id="host-wait-hint">
+                                    Waiting for more players. Need at least <strong>2</strong> players.
+                                </div>
+                            {% endif %}
                         </div>
                     {% endif %}
+
 
                 {% elif game.status == 'active' %}
                     <div class="game-hint">

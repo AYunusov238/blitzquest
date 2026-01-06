@@ -109,6 +109,77 @@ async function applyGameStateUpdate(payload) {
     }
 }
 // ---------- UI: question modal ----------
+let questionTimer = null;
+let ACTIVE_QUESTION_KEY = null;   // prevents timer reset on polling
+let QUESTION_TIMER_RUNNING = false;
+
+function startQuestionTimer(seconds = 5, onTimeout) {
+  const timer = document.getElementById("question-timer");
+  const bar = document.getElementById("qtimer-bar");
+  const text = document.getElementById("qtimer-text");
+
+  if (!timer || !bar || !text) return;
+
+  clearInterval(questionTimer);
+
+  timer.classList.remove("hidden");
+  let remaining = seconds;
+  text.textContent = remaining;
+  bar.style.width = "100%";
+
+  questionTimer = setInterval(() => {
+    remaining--;
+    text.textContent = remaining;
+    bar.style.width = (remaining / seconds) * 100 + "%";
+
+    if (remaining <= 0) {
+        clearInterval(questionTimer);
+
+        // keep visible at 0 so UI doesn't "snap shut"
+        text.textContent = "0";
+        bar.style.width = "0%";
+
+        // run timeout after a short delay (lets UI finish)
+        setTimeout(() => {
+            if (typeof onTimeout === "function") onTimeout();
+    }, 1000);}
+  }, 1000);
+}
+function getQuestionKey(q) {
+  if (!q) return null;
+
+  // Prefer an ID from backend if you have it
+  if (q.id !== undefined && q.id !== null) return `id:${q.id}`;
+
+  // Otherwise build a best-effort key from stable fields
+  const prompt = q.prompt || q.question || "";
+  const correct = (q.correct_index !== undefined && q.correct_index !== null) ? q.correct_index : "";
+  return `p:${prompt}|c:${correct}`;
+}
+
+function stopQuestionTimer() {
+  clearInterval(questionTimer);
+}
+
+async function submitQuestionTimeout(gameId) {
+  const resp = await fetch(`/games/${gameId}/answer_question/`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Requested-With": "XMLHttpRequest",
+      "X-CSRFToken": getCookie("csrftoken") || "",
+    },
+    body: JSON.stringify({ timeout: true }),
+  });
+
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    throw new Error((data && data.detail) ? data.detail : `Error: ${resp.status}`);
+  }
+  return data;
+}
+
+
 function showQuestionModal(q, state) {
     const modal = document.getElementById("questionModal");
     const prompt = document.getElementById("qPrompt");
@@ -174,6 +245,8 @@ function showQuestionModal(q, state) {
         btn.textContent = text;
 
         btn.addEventListener("click", async () => {
+            ACTIVE_QUESTION_KEY = null;
+            stopQuestionTimer();
             Array.from(choicesWrap.querySelectorAll("button")).forEach(b => b.disabled = true);
             changeBtn.disabled = true;
             try {
@@ -236,10 +309,37 @@ function showQuestionModal(q, state) {
 
     modal.classList.remove("is-hidden");
     modal.setAttribute("aria-hidden", "false");
+    const qKey = getQuestionKey(q);
+    const isSameQuestion = (ACTIVE_QUESTION_KEY && qKey && ACTIVE_QUESTION_KEY === qKey);
+
+    if (!isSameQuestion) {
+        ACTIVE_QUESTION_KEY = qKey;
+        stopQuestionTimer();
+
+        // start only once per question
+        startQuestionTimer(5, async () => {
+            // timeout submit
+            Array.from(choicesWrap.querySelectorAll("button")).forEach(b => (b.disabled = true));
+            changeBtn.disabled = true;
+            feedback.textContent = "Time is up.";
+
+            try {
+            await submitQuestionTimeout(gameId);
+            } finally {
+            // force resync after timeout resolves
+            fetchGameState(gameId);
+            }
+        });
+    }
+
+
+
 }
 
 
 function hideQuestionModal() {
+    ACTIVE_QUESTION_KEY = null;
+    stopQuestionTimer();
     const modal = document.getElementById("questionModal");
     if (!modal) return;
     modal.classList.add("is-hidden");

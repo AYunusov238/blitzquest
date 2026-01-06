@@ -17,7 +17,7 @@ class Game(models.Model):
         FINISHED = "finished", "Finished"
 
     class Mode(models.TextChoices):
-        FINISH = "finish", "Finish Line"
+        FINISH = "finish", "Custom Game"
         DRAFT = "draft", "Draft Mode"
         SURVIVAL = "survival", "Survival"
 

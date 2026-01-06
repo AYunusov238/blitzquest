@@ -90,9 +90,33 @@ async function fetchLobbyState(gameId) {
         // only care while waiting / active
         if (data.status === "waiting" || data.status === "active") {
             updateLobbyPlayers(data);
+            updateLobbyStartUI(data);
         }
     } catch (e) {
         console.error("Lobby state error:", e);
+    }
+}
+function updateLobbyStartUI(state) {
+    if (!state) return;
+
+    // 1. Ensure we only run this logic if the game is still in 'waiting' status
+    if (state.status !== "waiting") return;
+
+    const players = Array.isArray(state.players) ? state.players : [];
+    const canStart = players.length >= 2;
+
+    const startForm = document.getElementById("start-game-form");
+    const hostHint = document.getElementById("host-wait-hint");
+
+    // Debugging: Uncomment the line below to see why it might be failing in your console
+    // console.log("Players:", players.length, "canStart:", canStart, "formExists:", !!startForm);
+
+    if (startForm) {
+        // Use 'block' or 'flex' instead of empty string to ensure it overrides 'display: none'
+        startForm.style.setProperty('display', canStart ? 'block' : 'none', 'important');
+    }
+    if (hostHint) {
+        hostHint.style.display = canStart ? "none" : "block";
     }
 }
 
