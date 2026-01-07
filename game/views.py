@@ -928,21 +928,23 @@ def use_card(request, game_id):
         me.save(update_fields=["extra_rolls"])
 
     elif et == "swap_position":
-        if not target_player_id:
-            return JsonResponse({"detail": "target_player_id is required for swap."}, status=400)
+        candidates = (
+            game.players.filter(is_alive=True)
+            .exclude(id=me.id)
+            .filter(position__gt=me.position)
+        )
 
-        target = game.players.filter(id=target_player_id, is_alive=True).first()
-        if not target:
-            return JsonResponse({"detail": "Target player not found."}, status=404)
+        if not candidates.exists():
+            return JsonResponse({"detail": "No alive player ahead of you to swap with."}, status=400)
 
-        if abs(target.position - me.position) != 1:
-            return JsonResponse({"detail": "Target player must be adjacent."}, status=400)
+        target = random.choice(list(candidates))
 
         me_pos = me.position
         me.position = target.position
         target.position = me_pos
         me.save(update_fields=["position"])
         target.save(update_fields=["position"])
+
 
     elif et == "change_question":
         if not game.pending_question:

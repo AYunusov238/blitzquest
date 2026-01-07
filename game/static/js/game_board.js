@@ -1391,29 +1391,24 @@ function renderInventoryUI(state) {
 
             // swap_position needs target player (adjacent)
             if (effect === "swap_position") {
-                const players = Array.isArray(state.players) ? state.players : [];
-                const me = players.find((p) => p.is_you);
-                if (!me) {
-                    alert("Could not identify your player.");
-                    return;
-                }
-
-                const adjacent = players.filter(
-                    (p) =>
-                        !p.is_you &&
-                        p.is_alive &&
-                        (p.position === me.position - 1 || p.position === me.position + 1)
-                );
-
-                if (adjacent.length === 0) {
-                    alert("No adjacent player to swap with.");
-                    return;
-                }
-
-                // simplest: swap with first adjacent
-                useCard(gameId, cardId, adjacent[0].id);
+            const players = Array.isArray(state.players) ? state.players : [];
+            const me = players.find((p) => p.is_you);
+            if (!me) {
+                alert("Could not identify your player.");
                 return;
             }
+
+            const ahead = players.filter((p) => !p.is_you && p.is_alive && p.position > me.position);
+
+            if (ahead.length === 0) {
+                alert("No alive player ahead of you to swap with.");
+                return;
+            }
+
+            useCard(gameId, cardId);
+            return;
+            }
+
 
             useCard(gameId, cardId);
         });
@@ -1544,31 +1539,6 @@ async function handleRollClick(e) {
             animateDieTo(Number(dice));
             if (diceText) diceText.textContent = `You rolled ${dice}.`;
         }
-
-        // if (logEl && move) {
-        //     const from = move.from_position;
-        //     const to = move.to_position;
-        //     const tileType = move.landed_tile_type;
-        //     const tileEffect = move.tile_effect || {};
-
-        //     let text = `Moved from ${from} to ${to}.`;
-        //     if (tileType) text += ` Landed on ${tileType}.`;
-        //     if (tileEffect.hp_delta) {
-        //         text += ` HP ${tileEffect.hp_delta > 0 ? "+" + tileEffect.hp_delta : tileEffect.hp_delta}.`;
-        //     }
-        //     if (tileEffect.coins_delta) {
-        //         text += ` Coins ${tileEffect.coins_delta > 0 ? "+" + tileEffect.coins_delta : tileEffect.coins_delta}.`;
-        //     }
-        //     if (tileEffect.extra && tileEffect.extra.died) text += " You died.";
-        //     if (tileEffect.extra && tileEffect.extra.opponent_died) text += " Opponent died.";
-        //     if (move.teleported) {
-        //         text += " 🌀 Teleported to Start!";
-        //     }
-        //     const p = document.createElement("p");
-        //     p.textContent = text;
-        //     logEl.prepend(p);
-        // }
-
         if (state) {
             updateBoardUI(state);
             updatePlayersUI(state);
