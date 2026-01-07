@@ -394,6 +394,7 @@ function showQuestionModal(q, state) {
                     updateDiceUI(data.game_state);
                     renderPlayerTokens(data.game_state);
                     renderQuestionUI(data.game_state);
+                    renderGunUI(data.game_state);
                     renderInventoryUI(data.game_state);
 
                 } else {
@@ -586,6 +587,112 @@ function showShopModal(pendingShop, gameState) {
     // If you want backdrop close, uncomment:
     // modal.querySelector(".smodal-backdrop")?.addEventListener("click", () => {});
 }
+
+function showGunModal(pendingGun, state) {
+  const modal = document.getElementById("gunModal");
+  if (!modal) return;
+
+  modal.classList.remove("is-hidden");
+  modal.setAttribute("aria-hidden", "false");
+
+  const wrap = document.getElementById("gunTargets");
+  const fb = document.getElementById("gunFeedback");
+  if (fb) fb.textContent = "";
+
+  const targets = (pendingGun && Array.isArray(pendingGun.targets)) ? pendingGun.targets : [];
+  if (!wrap) return;
+
+  if (!targets.length) {
+    wrap.innerHTML = `<div class="muted">No available targets.</div>`;
+    return;
+  }
+  (function bindGunModalButtonsOnce(){
+        const x = document.getElementById("gunCloseBtn");
+        const c = document.getElementById("gunCancelBtn");
+
+        if (x && !x.dataset.bound) {
+            x.dataset.bound = "1";
+            x.addEventListener("click", skipGunAndClose);
+        }
+        if (c && !c.dataset.bound) {
+            c.dataset.bound = "1";
+            c.addEventListener("click", skipGunAndClose);
+        }
+    })();
+
+
+  wrap.innerHTML = targets.map(t => `
+     <button type="button" class="gun-target" data-gun-target="${t.id}">
+      <div class="name">${escapeHtml(t.username)}</div>
+      <div class="hp">HP: ${t.hp}</div>
+    </button>
+  `).join("");
+
+
+  wrap.querySelectorAll("[data-gun-target]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const gid = getGameIdFromPage();
+      const targetId = Number(btn.getAttribute("data-gun-target"));
+      try {
+        const res = await fetch(`/games/${gid}/gun/attack/`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": getCSRFToken(),
+          },
+          body: JSON.stringify({ target_player_id: targetId }),
+        });
+        const data = await safeJson(res);
+        if (!res.ok) {
+          if (fb) fb.textContent = (data && data.detail) ? data.detail : "Failed.";
+          return;
+        }
+        await applyGameStateUpdate(data); // expects {game_state:...}
+      } catch {
+        if (fb) fb.textContent = "Network error.";
+      }
+    });
+  });
+}
+
+function hideGunModal() {
+  const modal = document.getElementById("gunModal");
+  if (!modal) return;
+  modal.classList.add("is-hidden");
+  modal.setAttribute("aria-hidden", "true");
+}
+
+function renderGunUI(state) {
+  if (state && state.pending_gun) showGunModal(state.pending_gun, state);
+  else hideGunModal();
+}
+async function skipGunAndClose() {
+  const gid = getGameIdFromPage();
+
+  try {
+    const res = await fetch(`/games/${gid}/gun/skip/`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": getCSRFToken(),
+      },
+      body: JSON.stringify({}),
+    });
+
+    const data = await safeJson(res);
+    if (res.ok) {
+      await applyGameStateUpdate(data); // updates UI + state
+      hideGunModal();
+      return;
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  // fallback (shouldn't happen often)
+  hideGunModal();
+}
+
 
 /**
  * Closes the shop modal UI only.
@@ -1131,7 +1238,6 @@ function updateBoardUI(state) {
         }
     }
 
-    // Group players by tile position
     const playersByPos = {};
     for (const p of players) {
         const pos = typeof p.position === "number" ? p.position : 0;
@@ -1139,7 +1245,6 @@ function updateBoardUI(state) {
         playersByPos[pos].push(p);
     }
 
-    // Ensure stable ordering 0..N by position
     const tiles = tilesRaw.slice().sort((a, b) => {
         const pa = typeof a.position === "number" ? a.position : 0;
         const pb = typeof b.position === "number" ? b.position : 0;
@@ -1147,7 +1252,6 @@ function updateBoardUI(state) {
     });
 
     const html = tiles.map(tile => {
-        // ... (keep existing tile rendering logic)
         const pos = typeof tile.position === "number" ? tile.position : 0;
         const tPlayers = playersByPos[pos] || [];
         const hasCurrent = tPlayers.some(p => p.is_current_turn);
@@ -1167,8 +1271,9 @@ function updateBoardUI(state) {
                 case "mass_warp": label = "Mass Warp"; break;
                 case "duel": label = "Duel"; break;
                 case "shop": label = "Shop"; break;
-                default: label = ""; break;
                 case "portal": label = "Portal"; break;
+                case "gun": label = "Gun"; break;
+                default: label = ""; break;
             }
         }
 
@@ -1180,6 +1285,9 @@ function updateBoardUI(state) {
         }
         if (type === "portal") {
             labelHtml = `<div class="board-tile-symbol">🌀</div>`;
+        }
+        if (type === "gun") {
+            labelHtml = `<div class="board-tile-symbol">🔫</div>`;
         }
 
         // ... (keep rest of tile map logic)
@@ -1348,6 +1456,7 @@ async function useCard(gameId, cardId, targetPlayerId = null) {
     renderPlayerTokens(state);
     renderQuestionUI(state);
     renderInventoryUI(state);
+    renderGunUI(state);
 }
 
 function renderInventoryUI(state) {
@@ -1436,6 +1545,7 @@ async function fetchGameState(gameId) {
         renderInventoryUI(data);
         renderQuestionUI(data);
         renderDraftUI(data);
+        renderGunUI(data);
 
 
         if (data.pending_duel) {
@@ -1546,6 +1656,7 @@ async function handleRollClick(e) {
             renderPlayerTokens(state);
             renderQuestionUI(state);
             renderInventoryUI(state);
+            renderGunUI(state);
         }
     } catch (e) {
         console.error("roll error:", e);

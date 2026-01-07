@@ -62,6 +62,7 @@ function updateBoardUI(state) {
                     case "mass_warp": label = "Mass"; break;
                     case "duel": label = "Duel"; break;
                     case "shop": label = "Shop"; break;
+                    case "gun": label = "Gun"; break;
                     case "empty":
                     default: label = ""; break;
                 }

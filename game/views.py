@@ -51,6 +51,7 @@ def _tile_weights_for(game: Game):
         BoardTile.TileType.DUEL: 1,
         BoardTile.TileType.SHOP: 1,
         BoardTile.TileType.SAFE: 1,
+        BoardTile.TileType.GUN: 1,
     }
 
     if game.mode != Game.Mode.SURVIVAL:
@@ -296,6 +297,8 @@ def create_default_board_for_game(game: Game, enabled_tiles=None):
             label = "DUEL"
         elif tile_type == BoardTile.TileType.SHOP:
             label = "SHOP"
+        elif tile_type == BoardTile.TileType.GUN:
+            label = "GUN"
         elif tile_type == BoardTile.TileType.SAFE:
             label = "SAFE"
 
@@ -656,6 +659,16 @@ def game_roll(request, game_id: int):
             {"detail": "Finish the duel first.", "game_state": game.to_public_state(for_user=request.user)},
             status=400
         )
+    # If a gun action is pending, rolling is blocked until target is chosen by the owner.
+    if getattr(game, "pending_gun", None):
+        game.sync_turn_to_pending_gun()
+        owner_id = (game.pending_gun or {}).get("for_player_id")
+        if owner_id != player.id:
+            return JsonResponse({"detail": "A player is choosing a gun target."}, status=403)
+        return JsonResponse(
+            {"detail": "Choose a target first.", "game_state": game.to_public_state(for_user=request.user)},
+            status=400
+        )
     # Normal turn check
     current = game.current_player
     if not current or current.id != player.id:
@@ -848,6 +861,80 @@ def shop_close(request, game_id: int):
 
     return JsonResponse({"game_state": game.to_public_state(for_user=request.user)})
 
+@login_required
+@require_POST
+@transaction.atomic
+def gun_attack(request, game_id: int):
+    game = get_object_or_404(Game, id=game_id)
+    if game.status != Game.Status.ACTIVE:
+        return JsonResponse({"detail": "Game is not active."}, status=400)
+
+    me = game.players.select_related("user").filter(user=request.user).first()
+    if not me:
+        return JsonResponse({"detail": "You are not a player in this game."}, status=403)
+
+    pg = game.pending_gun
+    if not pg:
+        return JsonResponse({"detail": "No pending gun action."}, status=400)
+
+    if pg.get("for_player_id") != me.id:
+        return JsonResponse({"detail": "It is not your action."}, status=403)
+
+    try:
+        body = json.loads(request.body.decode("utf-8") or "{}")
+        target_id = int(body.get("target_player_id"))
+    except Exception:
+        return JsonResponse({"detail": "Invalid payload."}, status=400)
+
+    if target_id == me.id:
+        return JsonResponse({"detail": "You cannot target yourself."}, status=400)
+
+    target = game.players.select_related("user").filter(id=target_id, is_alive=True).first()
+    if not target:
+        return JsonResponse({"detail": "Target not found or not alive."}, status=404)
+
+    damage = int(pg.get("damage", 2) or 2)
+    game.apply_damage(target, damage, effects=None, source="gun")
+
+    # clear pending gun and advance turn
+    game.pending_gun = None
+    game.save(update_fields=["pending_gun"])
+    game.advance_turn()
+
+    return JsonResponse({
+        "action": "gun_attack",
+        "result": {"target_player_id": target.id, "damage": damage},
+        "game_state": game.to_public_state(for_user=request.user),
+    })
+
+@login_required
+@require_POST
+@transaction.atomic
+def gun_skip(request, game_id: int):
+    game = get_object_or_404(Game, id=game_id)
+    if game.status != Game.Status.ACTIVE:
+        return JsonResponse({"detail": "Game is not active."}, status=400)
+
+    me = game.players.select_related("user").filter(user=request.user).first()
+    if not me:
+        return JsonResponse({"detail": "You are not a player in this game."}, status=403)
+
+    pg = getattr(game, "pending_gun", None)
+    if not pg:
+        return JsonResponse({"detail": "No pending gun action."}, status=400)
+
+    if pg.get("for_player_id") != me.id:
+        return JsonResponse({"detail": "It is not your action."}, status=403)
+
+    # Clear gun action and skip this player's turn
+    game.pending_gun = None
+    game.save(update_fields=["pending_gun"])
+    game.advance_turn()
+
+    return JsonResponse({
+        "action": "gun_skip",
+        "game_state": game.to_public_state(for_user=request.user),
+    })
 
 @login_required
 def game_board(request, game_id: int):

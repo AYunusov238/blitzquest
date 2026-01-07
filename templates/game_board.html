@@ -83,6 +83,7 @@
                             {% elif tile.tile_type == "shop" %}${# Shop #}
                             {% elif tile.tile_type == "empty" %}&nbsp;
                             {% elif tile.tile_type == "finish" %}F
+                            {% elif tile.tile_type == "gun" %}G
                             {% endif %}
                         </span>
                         <div class="tile-tokens"></div>
@@ -118,6 +119,9 @@
                 </span>
                 <span class="legend-item">
                     <span class="legend-color board-tile-duel"></span> Duel
+                </span>
+                <span class="legend-item">
+                    <span class="legend-color board-tile-gun"></span> Gun
                 </span>
                 <span class="legend-item">
                     <span class="legend-color board-tile-shop"></span> Shop
@@ -331,6 +335,31 @@
     </div>
   </div>
 </div>
+
+<!-- Gun modal -->
+<div id="gunModal" class="gun-modal is-hidden" aria-hidden="true">
+  <div class="gun-card" role="dialog" aria-modal="true" aria-labelledby="gunTitle">
+    <div class="gun-head">
+      <div class="gun-title" id="gunTitle">Gun Tile</div>
+      <div class="gun-meta">
+        <span class="gun-badge">2 DMG</span>
+        <button type="button" class="gun-x" id="gunCloseBtn" aria-label="Close">✕</button>
+      </div>
+    </div>
+
+    <div class="gun-sub">
+      Choose an alive player to attack.
+    </div>
+
+    <div id="gunTargets" class="gun-target-grid"></div>
+
+    <div class="gun-foot">
+      <div id="gunFeedback" class="gun-feedback"></div>
+      <button type="button" class="gun-cancel" id="gunCancelBtn">Cancel</button>
+    </div>
+  </div>
+</div>
+
 
 <!-- Duel modal (Prediction Duel) -->
 <div id="duelModal" class="dmodal is-hidden" aria-hidden="true">

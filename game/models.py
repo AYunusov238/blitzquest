@@ -73,6 +73,9 @@ class Game(models.Model):
     # When set, duel is active between players
     pending_duel = models.JSONField(null=True, blank=True)
 
+    # When set, gun is active and MUST be resolved by for_player_id before turn advances
+    pending_gun = models.JSONField(null=True, blank=True)
+
 
     def __str__(self) -> str:
         return f"Game {self.code} ({self.get_status_display()})"
@@ -228,6 +231,26 @@ class Game(models.Model):
                 return False
 
         return False
+    
+    def sync_turn_to_pending_gun(self) -> bool:
+        pg = self.pending_gun
+        if not pg:
+            return False
+
+        pid = pg.get("for_player_id")
+        if not pid:
+            return False
+
+        players = list(self.players_by_turn_order)
+        for idx, p in enumerate(players):
+            if p.id == pid:
+                if self.current_turn_index != idx:
+                    self.current_turn_index = idx
+                    self.save(update_fields=["current_turn_index"])
+                    return True
+                return False
+        return False
+
 
     # ---------------------------
     # NEW: keep turn locked to pending duel owner
@@ -263,6 +286,7 @@ class Game(models.Model):
         self.sync_turn_to_pending_question()
         self.sync_turn_to_pending_shop()
         self.sync_turn_to_pending_duel()
+        self.sync_turn_to_pending_gun()
 
         # Players list
         players_qs = self.players.select_related("user").order_by("turn_order")
@@ -306,6 +330,23 @@ class Game(models.Model):
                     "shop_level": self.pending_shop.get("shop_level", 1),
                     "offers": self.pending_shop.get("offers", []),
                 }
+
+        gun_payload = None
+        gun_for_player_id = None
+        gun_active = bool(self.pending_gun)
+
+        if self.pending_gun:
+            gun_for_player_id = self.pending_gun.get("for_player_id")
+            if me is not None and gun_for_player_id == me.id:
+                targets = list(
+                    self.players.filter(is_alive=True).exclude(id=me.id).select_related("user")
+                )
+                gun_payload = {
+                    "damage": int(self.pending_gun.get("damage", 2) or 2),
+                    "tile_position": self.pending_gun.get("tile_position"),
+                    "targets": [{"id": t.id, "username": t.user.username, "hp": t.hp} for t in targets],
+                }
+
 
         players_payload = []
         for p in players_list:
@@ -359,10 +400,10 @@ class Game(models.Model):
             "pending_shop": shop_payload,
             "pending_shop_active": shop_active,
             "pending_shop_for_player_id": shop_for_player_id,
+            "pending_gun": gun_payload,
+            "pending_gun_active": gun_active,
+            "pending_gun_for_player_id": gun_for_player_id,
         }
-
-        
-        
         # ----------------------------
         # Pending Duel (Prediction Duel)
         # ----------------------------
@@ -763,6 +804,28 @@ class Game(models.Model):
 
             effects["extra"]["shop_triggered"] = True
             return effects
+        
+        # ---------- GUN ----------
+        if t == BoardTile.TileType.GUN:
+            if not self.pending_gun:
+                self.pending_gun = {
+                    "for_player_id": player.id,
+                    "tile_position": int(getattr(tile, "position", player.position) or player.position),
+                    "damage": 2,
+                }
+
+                # lock turn to shooter while choosing target
+                players = list(self.players.order_by("turn_order"))
+                for idx, p in enumerate(players):
+                    if p.id == player.id:
+                        self.current_turn_index = idx
+                        break
+
+                self.save(update_fields=["pending_gun", "current_turn_index"])
+
+            effects["extra"]["gun_triggered"] = True
+            return effects
+
 
         # ---------- FINISH ----------
         if t == BoardTile.TileType.FINISH:
@@ -904,8 +967,11 @@ class Game(models.Model):
         if self.pending_duel:
             self.sync_turn_to_pending_duel()
 
+        if self.pending_gun:
+            self.sync_turn_to_pending_gun()
+
         # If player did not win, go to next player's turn
-        if not move_result["won"] and not self.pending_question and not self.pending_shop and not self.pending_duel:
+        if not move_result["won"] and not self.pending_question and not self.pending_shop and not self.pending_duel and not self.pending_gun:
             if getattr(player, "extra_rolls", 0) > 0:
                 player.extra_rolls -= 1
                 player.save(update_fields=["extra_rolls"])
@@ -1112,6 +1178,7 @@ class BoardTile(models.Model):
         TRAP = "trap", "Trap"
         HEAL = "heal", "Heal"
         BONUS = "bonus", "Bonus"
+        GUN = "gun", "Gun"
 
         WARP = "warp", "Warp"
         MASS_WARP = "mass_warp", "Mass Warp"

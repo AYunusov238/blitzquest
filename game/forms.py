@@ -10,6 +10,7 @@ TILE_CHOICES = [
     (BoardTile.TileType.MASS_WARP, "Mass Warp"),
     (BoardTile.TileType.DUEL, "Duel"),
     (BoardTile.TileType.SHOP, "Shop"),
+    (BoardTile.TileType.GUN, "Gun"),
 ]
 
 DEFAULT_TILES = [v for (v, _) in TILE_CHOICES]
@@ -25,6 +26,7 @@ class GameCreateForm(forms.ModelForm):
             (BoardTile.TileType.MASS_WARP, "Mass Warp"),
             (BoardTile.TileType.DUEL, "Duel"),
             (BoardTile.TileType.SHOP, "Shop"),
+            (BoardTile.TileType.GUN, "Gun"),
         ],
         widget=forms.CheckboxSelectMultiple,
         required=False,

@@ -314,6 +314,166 @@
   color: #ffedd5;
 }
 
+/* ---- Gun modal shell ---- */
+.gun-modal {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  z-index: 9999;
+  background: rgba(0,0,0,.55);
+  backdrop-filter: blur(6px);
+}
+
+.gun-modal.is-hidden { display: none; }
+
+.gun-card {
+  width: min(720px, 96vw);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(20,24,32,.96), rgba(10,12,18,.96));
+  border: 1px solid rgba(255,255,255,.10);
+  box-shadow: 0 18px 60px rgba(0,0,0,.65);
+  padding: 16px;
+}
+
+/* ---- Header ---- */
+.gun-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.gun-title {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: .2px;
+}
+
+.gun-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.gun-badge {
+  font-size: 12px;
+  font-weight: 800;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255,60,60,.15);
+  border: 1px solid rgba(255,60,60,.35);
+  color: #fff;
+  text-shadow: 0 0 8px rgba(255,60,60,.35);
+}
+
+.gun-x {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.10);
+  color: rgba(255,255,255,.85);
+  cursor: pointer;
+}
+.gun-x:hover { background: rgba(255,255,255,.10); }
+
+/* ---- Body ---- */
+.gun-sub {
+  margin-top: 10px;
+  color: rgba(255,255,255,.75);
+  font-size: 13px;
+}
+
+.gun-target-grid {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+}
+
+/* target card button */
+.gun-target {
+  text-align: left;
+  width: 100%;
+  border-radius: 14px;
+  padding: 12px 12px;
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.10);
+  color: rgba(255,255,255,.92);
+  cursor: pointer;
+  transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease;
+}
+
+.gun-target:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255,60,60,.35);
+  box-shadow: 0 0 0 2px rgba(255,60,60,.12);
+}
+
+.gun-target .name {
+  font-weight: 800;
+  font-size: 13px;
+}
+
+.gun-target .hp {
+  margin-top: 4px;
+  font-size: 12px;
+  color: rgba(255,255,255,.65);
+}
+
+/* ---- Footer ---- */
+.gun-foot {
+  margin-top: 14px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.gun-feedback {
+  min-height: 18px;
+  font-size: 12px;
+  color: rgba(255,120,120,.95);
+}
+
+.gun-cancel {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.12);
+  color: rgba(255,255,255,.9);
+  cursor: pointer;
+}
+.gun-cancel:hover { background: rgba(255,255,255,.10); }
+
+
+.board-tile-gun {
+  background:
+    radial-gradient(120% 120% at top left, #ff4d4d 0%, #7a0f0f 55%, #120404 100%);
+  border: 1px solid rgba(255, 80, 80, 0.45);
+  box-shadow:
+    0 0 10px rgba(255, 80, 80, 0.35),
+    inset 0 0 14px rgba(0, 0, 0, 0.6);
+  color: #fff;
+}
+
+.board-tile-gun .tile-label {
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-shadow: 0 0 6px rgba(255, 90, 90, 0.8);
+}
+
+
+.gun-targets {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+
 .board-tile-empty {
   background: linear-gradient(135deg, #1e293b, #0f172a);
   color: #9ca3af;
