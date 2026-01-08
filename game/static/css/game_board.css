@@ -1917,3 +1917,245 @@ body.modal-open {
     grid-template-columns: 1fr;
   }
 }
+
+/* ============================
+   Game Chat (FINAL)
+   - background: #020617
+   - input (no emoji)
+   - send icon button
+============================ */
+
+.chat-section{ padding: 0 !important; }
+
+.ig-chat{
+  overflow: hidden;
+  border-radius: 18px;
+  background: #020617;
+  border: 1px solid rgba(148,163,184,.16);
+  box-shadow: 0 18px 50px rgba(0,0,0,.45);
+}
+
+/* Header */
+.ig-chat-header{
+  display:flex;
+  align-items:center;
+  justify-content:flex-start;
+  gap:12px;
+  padding: 12px 12px;
+  background: rgba(15,23,42,.55);
+  border-bottom: 1px solid rgba(148,163,184,.14);
+}
+
+.ig-chat-left{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  min-width: 0;
+}
+
+.ig-chat-avatar{
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-weight: 800;
+  letter-spacing:.2px;
+  color:#fff;
+  background:
+    radial-gradient(120% 120% at 30% 20%, rgba(255,255,255,.22), rgba(255,255,255,.06)),
+    linear-gradient(135deg, rgba(255, 128, 0, .55), rgba(170, 0, 255, .55));
+  border: 1px solid rgba(148,163,184,.18);
+  flex: 0 0 auto;
+}
+
+.ig-chat-titlewrap{ min-width: 0; }
+
+.ig-chat-title{
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.1;
+  color: #e5e7eb;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ig-chat-sub{
+  margin-top: 2px;
+  font-size: 11px;
+  color: rgba(226,232,240,.70);
+}
+
+/* Body */
+.ig-chat-body{
+  height: 270px;
+  overflow:auto;
+  padding: 12px;
+  background: #020617;
+}
+
+/* scrollbar */
+.ig-chat-body::-webkit-scrollbar{ width:10px; }
+.ig-chat-body::-webkit-scrollbar-thumb{
+  background: rgba(148,163,184,.18);
+  border-radius: 999px;
+  border: 2px solid rgba(0,0,0,0);
+  background-clip: padding-box;
+}
+
+/* Message rows */
+.chat-row{
+  display:flex;
+  gap:8px;
+  align-items:flex-end;
+  margin: 10px 0;
+}
+
+.chat-row .chat-meta{ display:none; }
+
+.chat-row:not(.you)::before{
+  content: attr(data-initial);
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size: 11px;
+  font-weight: 800;
+  color: rgba(255,255,255,.9);
+  background: rgba(148,163,184,.10);
+  border: 1px solid rgba(148,163,184,.16);
+  flex: 0 0 auto;
+}
+
+.chat-row .chat-text{
+  max-width: 78%;
+  padding: 10px 12px;
+  border-radius: 18px;
+  line-height: 1.35;
+  font-size: 13px;
+  border: 1px solid rgba(148,163,184,.16);
+  background: rgba(148,163,184,.10);
+  color: rgba(255,255,255,.92);
+  position: relative;
+  word-break: break-word;
+}
+
+.chat-row:not(.you) .chat-text::after{
+  content:"";
+  position:absolute;
+  left:-6px;
+  bottom: 8px;
+  width: 10px;
+  height: 10px;
+  background: rgba(148,163,184,.10);
+  border-left: 1px solid rgba(148,163,184,.16);
+  border-bottom: 1px solid rgba(148,163,184,.16);
+  transform: rotate(45deg);
+  border-bottom-left-radius: 3px;
+}
+
+.chat-row.you{ justify-content:flex-end; }
+.chat-row.you::before{ content:""; width:0; height:0; border:0; margin:0; }
+
+.chat-row.you .chat-text{
+  background: linear-gradient(135deg, rgba(140, 70, 255, .92), rgba(88, 70, 255, .92));
+  border-color: rgba(167,139,250,.35);
+  color: #fff;
+}
+
+.chat-row.you .chat-text::after{
+  content:"";
+  position:absolute;
+  right:-6px;
+  bottom: 8px;
+  width: 10px;
+  height: 10px;
+  background: rgba(110, 70, 255, .92);
+  border-right: 1px solid rgba(167,139,250,.35);
+  border-top: 1px solid rgba(167,139,250,.20);
+  transform: rotate(45deg);
+  border-top-right-radius: 3px;
+}
+
+/* Input row */
+.ig-chat-inputrow{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding: 10px 12px;
+  background: rgba(15,23,42,.55);
+  border-top: 1px solid rgba(148,163,184,.14);
+}
+
+/* pill */
+.ig-compose{
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+
+  border-radius: 999px;
+  padding: 10px 14px;
+  background: rgba(148,163,184,.08);
+  border: 1px solid rgba(148,163,184,.18);
+}
+
+.ig-compose:focus-within{
+  border-color: rgba(170,0,255,.55);
+  box-shadow: 0 0 0 3px rgba(170,0,255,.14);
+}
+
+/* input */
+.ig-chat-input{
+  width: 100%;
+  min-width: 0;
+  height: 20px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: rgba(255,255,255,.92);
+  font-size: 13px;
+  padding: 0;
+  margin: 0;
+}
+
+.ig-chat-input::placeholder{ opacity:.55; }
+
+/* send icon button */
+.ig-send-icon{
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  display:grid;
+  place-items:center;
+
+  border: 1px solid rgba(148,163,184,.16);
+  background: rgba(140, 70, 255, .80);
+  cursor:pointer;
+
+  transition: transform .08s ease, filter .15s ease;
+}
+
+.ig-send-icon svg{
+  width: 20px;
+  height: 20px;
+  fill: #fff;
+  transform: translateX(1px);
+}
+
+.ig-send-icon:hover{ filter: brightness(1.08); }
+.ig-send-icon:active{ transform: translateY(1px); }
+
+.ig-send-icon:disabled{
+  opacity: .55;
+  cursor:not-allowed;
+  filter: none;
+}
+
+@media (max-width: 640px){
+  .ig-chat-body{ height: 320px; }
+}
+
