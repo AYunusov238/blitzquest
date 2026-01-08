@@ -16,8 +16,17 @@ from django.db import transaction
 from django.http import HttpResponse
 
 
-from .models import Game, PlayerInGame, BoardTile, SupportCardInstance, SupportCardType
+
 from .forms import GameCreateForm, JoinGameForm
+
+from .models import (
+    Game,
+    PlayerInGame,
+    BoardTile,
+    SupportCardInstance,
+    SupportCardType,
+    GameChatMessage,   # ✅ CHAT
+)
 
 
 def signup(request):
@@ -1467,4 +1476,75 @@ def duel_skip(request, game_id: int):
     return JsonResponse({
         "action": "duel_skip",
         "game_state": game.to_public_state(for_user=request.user),
+    })
+
+
+
+# ============================
+# GAME CHAT API
+# ============================
+
+@login_required
+@require_GET
+def game_chat_messages(request, game_id: int):
+    game = get_object_or_404(Game, id=game_id)
+
+    # only players or host can read chat
+    is_player = game.players.filter(user=request.user).exists()
+    is_host = (game.host == request.user)
+    if not (is_player or is_host):
+        return JsonResponse({"detail": "Forbidden"}, status=403)
+
+    messages_qs = game.chat_messages.select_related("user").order_by("created_at")[:50]
+
+    data = [
+        {
+            "id": m.id,
+            "user": m.user.username,
+            "message": m.message,
+            "created_at": m.created_at.isoformat(),
+            "is_you": (m.user_id == request.user.id),
+        }
+        for m in messages_qs
+    ]
+
+    return JsonResponse({"messages": data})
+
+
+@login_required
+@require_POST
+@transaction.atomic
+def game_chat_send(request, game_id: int):
+    game = get_object_or_404(Game, id=game_id)
+
+    # only players or host can send
+    is_player = game.players.filter(user=request.user).exists()
+    is_host = (game.host == request.user)
+    if not (is_player or is_host):
+        return JsonResponse({"detail": "Forbidden"}, status=403)
+
+    try:
+        body = json.loads(request.body.decode("utf-8") or "{}")
+        text = (body.get("message") or "").strip()
+    except Exception:
+        return JsonResponse({"detail": "Invalid payload"}, status=400)
+
+    if not text:
+        return JsonResponse({"detail": "Message is empty"}, status=400)
+
+    if len(text) > 500:
+        return JsonResponse({"detail": "Message too long"}, status=400)
+
+    msg = GameChatMessage.objects.create(
+        game=game,
+        user=request.user,
+        message=text,
+    )
+
+    return JsonResponse({
+        "id": msg.id,
+        "user": msg.user.username,
+        "message": msg.message,
+        "created_at": msg.created_at.isoformat(),
+        "is_you": True,
     })

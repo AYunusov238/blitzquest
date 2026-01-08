@@ -1421,3 +1421,32 @@ class GameLog(models.Model):
     def __str__(self) -> str:
         who = self.player or "System"
         return f"[{self.game.code}] {who}: {self.get_action_type_display()}"
+
+
+
+# ============================
+# GAME CHAT
+# ============================
+
+class GameChatMessage(models.Model):
+    game = models.ForeignKey(
+        Game,
+        on_delete=models.CASCADE,
+        related_name="chat_messages",
+    )
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="game_chat_messages",
+    )
+
+    message = models.TextField()
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+
+    def __str__(self):
+        return f"[{self.game.code}] {self.user.username}: {self.message[:30]}"

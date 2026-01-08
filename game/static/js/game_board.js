@@ -1871,21 +1871,191 @@ function renderPlayerTokens(gameState) {
         });
     });
 }
+// ============================
+// GAME CHAT (polling + send)
+// ============================
+
+let CHAT_POLL_MS = 2000;
+let chatPoller = null;
+
+function getChatEls() {
+  return {
+    box: document.getElementById("chatMessages"),
+    input: document.getElementById("chatInput"),
+    sendBtn: document.getElementById("chatSendBtn"),
+    form: document.getElementById("chatForm"),
+    liveCount: document.getElementById("chatLiveCount"),
+  };
+}
+
+function escapeHtml(str) {
+  if (str === null || str === undefined) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function safeInitial(name) {
+  const t = (name || "").trim();
+  return t ? t[0].toUpperCase() : "?";
+}
+
+function chatScrollToBottom() {
+  const { box } = getChatEls();
+  if (!box) return;
+  box.scrollTop = box.scrollHeight;
+}
+
+function setSendEnabled() {
+  const { input, sendBtn } = getChatEls();
+  if (!input || !sendBtn) return;
+  sendBtn.disabled = (input.value || "").trim().length === 0;
+}
+
+function renderChatMessages(messages) {
+  const { box, liveCount } = getChatEls();
+  if (!box) return;
+
+  box.innerHTML = "";
+
+  for (const m of messages) {
+    const row = document.createElement("div");
+    row.className = m.is_you ? "chat-row you" : "chat-row";
+    row.setAttribute("data-initial", safeInitial(m.user));
+
+    row.innerHTML = `<div class="chat-text">${escapeHtml(m.message)}</div>`;
+    box.appendChild(row);
+  }
+
+  if (liveCount) liveCount.textContent = String(messages.length);
+  chatScrollToBottom();
+}
+
+async function fetchChat(gameId) {
+  const res = await fetch(`/games/${gameId}/chat/messages/`, {
+    headers: { "X-Requested-With": "XMLHttpRequest" },
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data) return;
+
+  const messages = Array.isArray(data.messages) ? data.messages : [];
+  renderChatMessages(messages);
+}
+
+function getCSRFToken() {
+  const name = "csrftoken";
+  const cookies = document.cookie ? document.cookie.split(";") : [];
+  for (let c of cookies) {
+    c = c.trim();
+    if (c.startsWith(name + "=")) return decodeURIComponent(c.substring(name.length + 1));
+  }
+  return "";
+}
+
+async function sendChat(gameId, text) {
+  const res = await fetch(`/games/${gameId}/chat/send/`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-CSRFToken": getCSRFToken(),
+      "X-Requested-With": "XMLHttpRequest",
+    },
+    body: JSON.stringify({ message: text }),
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = (data && data.detail) ? data.detail : `Chat send failed (${res.status})`;
+    throw new Error(msg);
+  }
+  return data;
+}
+
+function initChat() {
+  const gameId = window.GAME_ID;
+  const { input, sendBtn, form } = getChatEls();
+  if (!gameId || !input || !sendBtn || !form) return;
+
+  // initial load
+  fetchChat(gameId);
+
+  // polling
+  if (chatPoller) clearInterval(chatPoller);
+  chatPoller = setInterval(() => fetchChat(gameId), CHAT_POLL_MS);
+
+  // input enable/disable
+  input.addEventListener("input", setSendEnabled);
+
+  // submit
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    const text = (input.value || "").trim();
+    if (!text) return;
+
+    sendBtn.disabled = true;
+
+    try {
+      await sendChat(gameId, text);
+      input.value = "";
+      setSendEnabled();
+      await fetchChat(gameId);
+      input.focus();
+    } catch (err) {
+      alert(err?.message || "Chat error");
+      setSendEnabled();
+    }
+  });
+
+  // Enter => send (oddiy input bo‘lgani uchun)
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      form.requestSubmit();
+    }
+  });
+
+  // initial state
+  setSendEnabled();
+}
+
+
 
 
 // ---------- init ----------
 
+// document.addEventListener("DOMContentLoaded", function () {
+//     if (typeof window.GAME_ID === "undefined") return;
+//
+//     fetchGameState(window.GAME_ID);
+//     window.gamePoller = setInterval(function () {
+//         fetchGameState(window.GAME_ID);
+//     }, 2000);
+//
+//     const rollBtn = document.getElementById("roll-button");
+//     if (rollBtn) rollBtn.addEventListener("click", handleRollClick);
+//     initChat();
+// });
 document.addEventListener("DOMContentLoaded", function () {
-    if (typeof window.GAME_ID === "undefined") return;
+  const gid = getGameIdFromPage();
+  if (!gid) return;
 
-    fetchGameState(window.GAME_ID);
-    window.gamePoller = setInterval(function () {
-        fetchGameState(window.GAME_ID);
-    }, 2000);
+  window.GAME_ID = gid;
 
-    const rollBtn = document.getElementById("roll-button");
-    if (rollBtn) rollBtn.addEventListener("click", handleRollClick);
+  fetchGameState(gid);
+  window.gamePoller = setInterval(() => fetchGameState(gid), 2000);
+
+  const rollBtn = document.getElementById("roll-button");
+  if (rollBtn) rollBtn.addEventListener("click", handleRollClick);
+
+  initChat(); // ✅ shu kerak
 });
+
+
+
 function bqOpenFinishModal(state) {
     const modal = document.getElementById("finishModal");
     const tbody = document.getElementById("finishLeaderboardBody");
@@ -1949,4 +2119,6 @@ function bqOpenFinishModal(state) {
         }
     });
 }
+
+
 
