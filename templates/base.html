@@ -9,7 +9,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
   <!-- Global stylesheet -->
-  <link rel="stylesheet" href="{% static 'game/css/main.css' %}">
+  <link rel="stylesheet" href="{% static 'css/main.css' %}">
 
   {# Page-specific CSS can be added from child templates #}
   {% block extra_css %}{% endblock %}
@@ -76,7 +76,9 @@
       </div>
     </footer>
   </div>
-  <script src="{% static 'game/js/main.js' %}"></script>
+
+  <!-- Optional JS -->
+  <script src="{% static 'js/main.js' %}"></script>
 </body>
 
 </html>
