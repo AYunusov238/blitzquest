@@ -4,7 +4,7 @@
 {% block title %}Board – Game {{ game.code }}{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'css/game_board.css' %}">
+<link rel="stylesheet" href="{% static 'css/game_board.css' %}?v=1.2">
 {% endblock %}
 
 {% block content %}
@@ -489,5 +489,5 @@
 <script>
   window.BQ_LOBBY_URL = "{% url 'game:game_detail' game.id %}";
 </script>
-<script src="{% static 'js/game_board.js' %}"></script>
+<script src="{% static 'js/game_board.js' %}?v=1.2"></script>
 {% endblock %}

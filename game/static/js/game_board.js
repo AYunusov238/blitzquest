@@ -61,104 +61,104 @@ async function safeJson(res) {
 // Activity Log (global, via polling diffs)
 // -----------------------------
 window.BQ_ACTIVITY = window.BQ_ACTIVITY || {
-  lastPlayers: new Map(), // playerId -> { position, hp, coins }
-  seenKeys: new Set(),    // to prevent duplicates
+    lastPlayers: new Map(), // playerId -> { position, hp, coins }
+    seenKeys: new Set(),    // to prevent duplicates
 };
 
 function tileByPosition(state, pos) {
-  if (!state || !Array.isArray(state.tiles)) return null;
-  // tiles payload includes { position, type, type_display, ... }
-  return state.tiles.find(t => t.position === pos) || null;
+    if (!state || !Array.isArray(state.tiles)) return null;
+    // tiles payload includes { position, type, type_display, ... }
+    return state.tiles.find(t => t.position === pos) || null;
 }
 
 function playerColorClass(player) {
-  // stable color by turn order (or fallback by id)
-  const idx = (typeof player.turn_order === "number" ? player.turn_order : (player.id || 0)) % 6;
-  return `act-p${idx}`;
+    // stable color by turn order (or fallback by id)
+    const idx = (typeof player.turn_order === "number" ? player.turn_order : (player.id || 0)) % 6;
+    return `act-p${idx}`;
 }
 
 function appendActivityLine({ player, text }) {
-  const logEl = document.getElementById("dice-log");
-  if (!logEl) return;
+    const logEl = document.getElementById("dice-log");
+    if (!logEl) return;
 
-  const p = document.createElement("p");
-  p.className = "act-line";
+    const p = document.createElement("p");
+    p.className = "act-line";
 
-  const name = document.createElement("span");
-  name.className = `act-name ${playerColorClass(player)}`;
-  name.textContent = player.username || "Player";
+    const name = document.createElement("span");
+    name.className = `act-name ${playerColorClass(player)}`;
+    name.textContent = player.username || "Player";
 
-  const msg = document.createElement("span");
-  msg.className = "act-msg";
-  msg.textContent = ` ${text}`;
+    const msg = document.createElement("span");
+    msg.className = "act-msg";
+    msg.textContent = ` ${text}`;
 
-  p.appendChild(name);
-  p.appendChild(msg);
+    p.appendChild(name);
+    p.appendChild(msg);
 
-  logEl.prepend(p);
+    logEl.prepend(p);
 }
 
 function updateActivityFromStateDiff(prevState, nextState) {
-  if (!nextState || !Array.isArray(nextState.players)) return;
+    if (!nextState || !Array.isArray(nextState.players)) return;
 
-  // If first run, just snapshot (no spam)
-  if (!prevState || !Array.isArray(prevState.players)) {
-    window.BQ_ACTIVITY.lastPlayers.clear();
+    // If first run, just snapshot (no spam)
+    if (!prevState || !Array.isArray(prevState.players)) {
+        window.BQ_ACTIVITY.lastPlayers.clear();
+        for (const p of nextState.players) {
+            window.BQ_ACTIVITY.lastPlayers.set(p.id, {
+                position: p.position,
+                hp: p.hp,
+                coins: p.coins,
+            });
+        }
+        return;
+    }
+
+    const prevMap = window.BQ_ACTIVITY.lastPlayers;
+
     for (const p of nextState.players) {
-      window.BQ_ACTIVITY.lastPlayers.set(p.id, {
-        position: p.position,
-        hp: p.hp,
-        coins: p.coins,
-      });
+        const old = prevMap.get(p.id);
+        if (!old) continue;
+
+        const moved = old.position !== p.position;
+        const hpDelta = (p.hp ?? 0) - (old.hp ?? 0);
+        const coinsDelta = (p.coins ?? 0) - (old.coins ?? 0);
+
+        if (!moved && hpDelta === 0 && coinsDelta === 0) continue;
+
+        const landedTile = moved ? tileByPosition(nextState, p.position) : null;
+
+        let text = "";
+        if (moved) {
+            text = `moved ${old.position} → ${p.position}`;
+            if (landedTile) {
+                const typeLabel = landedTile.type_display || landedTile.type || "";
+                if (typeLabel) text += ` (landed: ${typeLabel})`;
+            }
+        } else {
+            text = `updated stats`;
+        }
+
+        if (hpDelta !== 0) text += ` | HP ${hpDelta > 0 ? `+${hpDelta}` : hpDelta}`;
+        if (coinsDelta !== 0) text += ` | Coins ${coinsDelta > 0 ? `+${coinsDelta}` : coinsDelta}`;
+
+        // Dedup key so the same diff doesn’t get appended twice
+        const key = `${p.id}|${old.position}->${p.position}|hp${hpDelta}|c${coinsDelta}`;
+        if (!window.BQ_ACTIVITY.seenKeys.has(key)) {
+            window.BQ_ACTIVITY.seenKeys.add(key);
+            appendActivityLine({ player: p, text });
+        }
     }
-    return;
-  }
 
-  const prevMap = window.BQ_ACTIVITY.lastPlayers;
-
-  for (const p of nextState.players) {
-    const old = prevMap.get(p.id);
-    if (!old) continue;
-
-    const moved = old.position !== p.position;
-    const hpDelta = (p.hp ?? 0) - (old.hp ?? 0);
-    const coinsDelta = (p.coins ?? 0) - (old.coins ?? 0);
-
-    if (!moved && hpDelta === 0 && coinsDelta === 0) continue;
-
-    const landedTile = moved ? tileByPosition(nextState, p.position) : null;
-
-    let text = "";
-    if (moved) {
-      text = `moved ${old.position} → ${p.position}`;
-      if (landedTile) {
-        const typeLabel = landedTile.type_display || landedTile.type || "";
-        if (typeLabel) text += ` (landed: ${typeLabel})`;
-      }
-    } else {
-      text = `updated stats`;
+    // Update snapshot
+    prevMap.clear();
+    for (const p of nextState.players) {
+        prevMap.set(p.id, {
+            position: p.position,
+            hp: p.hp,
+            coins: p.coins,
+        });
     }
-
-    if (hpDelta !== 0) text += ` | HP ${hpDelta > 0 ? `+${hpDelta}` : hpDelta}`;
-    if (coinsDelta !== 0) text += ` | Coins ${coinsDelta > 0 ? `+${coinsDelta}` : coinsDelta}`;
-
-    // Dedup key so the same diff doesn’t get appended twice
-    const key = `${p.id}|${old.position}->${p.position}|hp${hpDelta}|c${coinsDelta}`;
-    if (!window.BQ_ACTIVITY.seenKeys.has(key)) {
-      window.BQ_ACTIVITY.seenKeys.add(key);
-      appendActivityLine({ player: p, text });
-    }
-  }
-
-  // Update snapshot
-  prevMap.clear();
-  for (const p of nextState.players) {
-    prevMap.set(p.id, {
-      position: p.position,
-      hp: p.hp,
-      coins: p.coins,
-    });
-  }
 }
 
 function getDiceEls() {
@@ -217,69 +217,70 @@ let ACTIVE_QUESTION_KEY = null;   // prevents timer reset on polling
 let QUESTION_TIMER_RUNNING = false;
 
 function startQuestionTimer(seconds = 5, onTimeout) {
-  const timer = document.getElementById("question-timer");
-  const bar = document.getElementById("qtimer-bar");
-  const text = document.getElementById("qtimer-text");
+    const timer = document.getElementById("question-timer");
+    const bar = document.getElementById("qtimer-bar");
+    const text = document.getElementById("qtimer-text");
 
-  if (!timer || !bar || !text) return;
+    if (!timer || !bar || !text) return;
 
-  clearInterval(questionTimer);
+    clearInterval(questionTimer);
 
-  timer.classList.remove("hidden");
-  let remaining = seconds;
-  text.textContent = remaining;
-  bar.style.width = "100%";
-
-  questionTimer = setInterval(() => {
-    remaining--;
+    timer.classList.remove("hidden");
+    let remaining = seconds;
     text.textContent = remaining;
-    bar.style.width = (remaining / seconds) * 100 + "%";
+    bar.style.width = "100%";
 
-    if (remaining <= 0) {
-        clearInterval(questionTimer);
+    questionTimer = setInterval(() => {
+        remaining--;
+        text.textContent = remaining;
+        bar.style.width = (remaining / seconds) * 100 + "%";
 
-        // keep visible at 0 so UI doesn't "snap shut"
-        text.textContent = "0";
-        bar.style.width = "0%";
+        if (remaining <= 0) {
+            clearInterval(questionTimer);
 
-        // run timeout after a short delay (lets UI finish)
-        setTimeout(() => {
-            if (typeof onTimeout === "function") onTimeout();
-    }, 1000);}
-  }, 1000);
+            // keep visible at 0 so UI doesn't "snap shut"
+            text.textContent = "0";
+            bar.style.width = "0%";
+
+            // run timeout after a short delay (lets UI finish)
+            setTimeout(() => {
+                if (typeof onTimeout === "function") onTimeout();
+            }, 1000);
+        }
+    }, 1000);
 }
 function getQuestionKey(q) {
-  if (!q) return null;
+    if (!q) return null;
 
-  // Prefer an ID from backend if you have it
-  if (q.id !== undefined && q.id !== null) return `id:${q.id}`;
+    // Prefer an ID from backend if you have it
+    if (q.id !== undefined && q.id !== null) return `id:${q.id}`;
 
-  // Otherwise build a best-effort key from stable fields
-  const prompt = q.prompt || q.question || "";
-  const correct = (q.correct_index !== undefined && q.correct_index !== null) ? q.correct_index : "";
-  return `p:${prompt}|c:${correct}`;
+    // Otherwise build a best-effort key from stable fields
+    const prompt = q.prompt || q.question || "";
+    const correct = (q.correct_index !== undefined && q.correct_index !== null) ? q.correct_index : "";
+    return `p:${prompt}|c:${correct}`;
 }
 
 function stopQuestionTimer() {
-  clearInterval(questionTimer);
+    clearInterval(questionTimer);
 }
 
 async function submitQuestionTimeout(gameId) {
-  const resp = await fetch(`/games/${gameId}/answer_question/`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Requested-With": "XMLHttpRequest",
-      "X-CSRFToken": getCookie("csrftoken") || "",
-    },
-    body: JSON.stringify({ timeout: true }),
-  });
+    const resp = await fetch(`/games/${gameId}/answer_question/`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "X-CSRFToken": getCookie("csrftoken") || "",
+        },
+        body: JSON.stringify({ timeout: true }),
+    });
 
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    throw new Error((data && data.detail) ? data.detail : `Error: ${resp.status}`);
-  }
-  return data;
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+        throw new Error((data && data.detail) ? data.detail : `Error: ${resp.status}`);
+    }
+    return data;
 }
 
 
@@ -428,10 +429,10 @@ function showQuestionModal(q, state) {
             feedback.textContent = "Time is up.";
 
             try {
-            await submitQuestionTimeout(gameId);
+                await submitQuestionTimeout(gameId);
             } finally {
-            // force resync after timeout resolves
-            fetchGameState(gameId);
+                // force resync after timeout resolves
+                fetchGameState(gameId);
             }
         });
     }
@@ -589,135 +590,135 @@ function showShopModal(pendingShop, gameState) {
 }
 
 function showGunModal(pendingGun, state) {
-  const modal = document.getElementById("gunModal");
-  if (!modal) return;
+    const modal = document.getElementById("gunModal");
+    if (!modal) return;
 
-  modal.classList.remove("is-hidden");
-  modal.setAttribute("aria-hidden", "false");
+    modal.classList.remove("is-hidden");
+    modal.setAttribute("aria-hidden", "false");
 
-  const wrap = document.getElementById("gunTargets");
-  const fb = document.getElementById("gunFeedback");
-  if (fb) fb.textContent = "";
+    const wrap = document.getElementById("gunTargets");
+    const fb = document.getElementById("gunFeedback");
+    if (fb) fb.textContent = "";
 
-  // ✅ Bind close/cancel EVERY time (or once) BEFORE any early return
-  (function bindGunModalButtonsOnce() {
-    const x = document.getElementById("gunCloseBtn");
-    const c = document.getElementById("gunCancelBtn");
+    // ✅ Bind close/cancel EVERY time (or once) BEFORE any early return
+    (function bindGunModalButtonsOnce() {
+        const x = document.getElementById("gunCloseBtn");
+        const c = document.getElementById("gunCancelBtn");
 
-    if (x && !x.dataset.bound) {
-      x.dataset.bound = "1";
-      x.addEventListener("click", skipGunAndClose);
+        if (x && !x.dataset.bound) {
+            x.dataset.bound = "1";
+            x.addEventListener("click", skipGunAndClose);
+        }
+        if (c && !c.dataset.bound) {
+            c.dataset.bound = "1";
+            c.addEventListener("click", skipGunAndClose);
+        }
+    })();
+
+    const targets = (pendingGun && Array.isArray(pendingGun.targets)) ? pendingGun.targets : [];
+    if (!wrap) return;
+
+    // ✅ If no targets, still allow Exit/Cancel to work (skipGunAndClose)
+    if (!targets.length) {
+        wrap.innerHTML = `<div class="muted">No available targets.</div>`;
+        return;
     }
-    if (c && !c.dataset.bound) {
-      c.dataset.bound = "1";
-      c.addEventListener("click", skipGunAndClose);
-    }
-  })();
 
-  const targets = (pendingGun && Array.isArray(pendingGun.targets)) ? pendingGun.targets : [];
-  if (!wrap) return;
-
-  // ✅ If no targets, still allow Exit/Cancel to work (skipGunAndClose)
-  if (!targets.length) {
-    wrap.innerHTML = `<div class="muted">No available targets.</div>`;
-    return;
-  }
-
-  wrap.innerHTML = targets.map(t => `
+    wrap.innerHTML = targets.map(t => `
     <button type="button" class="gun-target" data-gun-target="${t.id}">
       <div class="name">${escapeHtml(t.username)}</div>
       <div class="hp">HP: ${t.hp}</div>
     </button>
   `).join("");
 
-  wrap.querySelectorAll("[data-gun-target]").forEach(btn => {
-    btn.addEventListener("click", async () => {
-      const gid = getGameIdFromPage();
-      const targetId = Number(btn.getAttribute("data-gun-target"));
-      try {
-        const res = await fetch(`/games/${gid}/gun/attack/`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-CSRFToken": getCSRFToken(),
-          },
-          body: JSON.stringify({ target_player_id: targetId }),
+    wrap.querySelectorAll("[data-gun-target]").forEach(btn => {
+        btn.addEventListener("click", async () => {
+            const gid = getGameIdFromPage();
+            const targetId = Number(btn.getAttribute("data-gun-target"));
+            try {
+                const res = await fetch(`/games/${gid}/gun/attack/`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-CSRFToken": getCSRFToken(),
+                    },
+                    body: JSON.stringify({ target_player_id: targetId }),
+                });
+                const data = await safeJson(res);
+                if (!res.ok) {
+                    if (fb) fb.textContent = (data && data.detail) ? data.detail : "Failed.";
+                    return;
+                }
+                await applyGameStateUpdate(data);
+            } catch {
+                if (fb) fb.textContent = "Network error.";
+            }
         });
-        const data = await safeJson(res);
-        if (!res.ok) {
-          if (fb) fb.textContent = (data && data.detail) ? data.detail : "Failed.";
-          return;
-        }
-        await applyGameStateUpdate(data);
-      } catch {
-        if (fb) fb.textContent = "Network error.";
-      }
     });
-  });
 }
 async function skipDuelAndClose() {
-  const gid = getGameIdFromPage();
+    const gid = getGameIdFromPage();
 
-  try {
-    const res = await fetch(`/games/${gid}/duel/skip/`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-CSRFToken": getCSRFToken(),
-      },
-      body: JSON.stringify({}),
-    });
+    try {
+        const res = await fetch(`/games/${gid}/duel/skip/`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-CSRFToken": getCSRFToken(),
+            },
+            body: JSON.stringify({}),
+        });
 
-    const data = await safeJson(res);
-    if (res.ok) {
-      await applyGameStateUpdate(data);
-      hideDuelModal();
-      return;
+        const data = await safeJson(res);
+        if (res.ok) {
+            await applyGameStateUpdate(data);
+            hideDuelModal();
+            return;
+        }
+    } catch (e) {
+        // ignore
     }
-  } catch (e) {
-    // ignore
-  }
 
-  hideDuelModal();
+    hideDuelModal();
 }
 
 
 function hideGunModal() {
-  const modal = document.getElementById("gunModal");
-  if (!modal) return;
-  modal.classList.add("is-hidden");
-  modal.setAttribute("aria-hidden", "true");
+    const modal = document.getElementById("gunModal");
+    if (!modal) return;
+    modal.classList.add("is-hidden");
+    modal.setAttribute("aria-hidden", "true");
 }
 
 function renderGunUI(state) {
-  if (state && state.pending_gun) showGunModal(state.pending_gun, state);
-  else hideGunModal();
+    if (state && state.pending_gun) showGunModal(state.pending_gun, state);
+    else hideGunModal();
 }
 async function skipGunAndClose() {
-  const gid = getGameIdFromPage();
+    const gid = getGameIdFromPage();
 
-  try {
-    const res = await fetch(`/games/${gid}/gun/skip/`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-CSRFToken": getCSRFToken(),
-      },
-      body: JSON.stringify({}),
-    });
+    try {
+        const res = await fetch(`/games/${gid}/gun/skip/`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-CSRFToken": getCSRFToken(),
+            },
+            body: JSON.stringify({}),
+        });
 
-    const data = await safeJson(res);
-    if (res.ok) {
-      await applyGameStateUpdate(data); // updates UI + state
-      hideGunModal();
-      return;
+        const data = await safeJson(res);
+        if (res.ok) {
+            await applyGameStateUpdate(data); // updates UI + state
+            hideGunModal();
+            return;
+        }
+    } catch (e) {
+        // ignore
     }
-  } catch (e) {
-    // ignore
-  }
 
-  // fallback (shouldn't happen often)
-  hideGunModal();
+    // fallback (shouldn't happen often)
+    hideGunModal();
 }
 
 
@@ -1065,43 +1066,43 @@ function renderDuelUI(duel, gameState) {
             btn.className = "dbtn";
             btn.innerHTML = `<strong>${p.username}</strong><br><small>HP ${p.hp} • Coins ${p.coins}</small>`;
             btn.onclick = async () => {
-            try {
-                if (feedback) feedback.textContent = "Selecting opponent...";
-                btn.disabled = true;
+                try {
+                    if (feedback) feedback.textContent = "Selecting opponent...";
+                    btn.disabled = true;
 
-                const res = await fetch(`/games/${gameState.id}/duel/select_opponent/`, {
-                method: "POST",
-                headers: {
-                    "X-Requested-With": "XMLHttpRequest",
-                    "X-CSRFToken": getCSRFToken(),
-                    "Content-Type": "application/x-www-form-urlencoded",
-                },
-                body: `opponent_id=${encodeURIComponent(p.id)}`
-                });
+                    const res = await fetch(`/games/${gameState.id}/duel/select_opponent/`, {
+                        method: "POST",
+                        headers: {
+                            "X-Requested-With": "XMLHttpRequest",
+                            "X-CSRFToken": getCSRFToken(),
+                            "Content-Type": "application/x-www-form-urlencoded",
+                        },
+                        body: `opponent_id=${encodeURIComponent(p.id)}`
+                    });
 
-                const payload = await safeJson(res);
+                    const payload = await safeJson(res);
 
-                if (!res.ok) {
-                const msg = (payload && (payload.detail || payload.error)) ? (payload.detail || payload.error) : `Error ${res.status}`;
-                if (feedback) feedback.textContent = msg;
-                btn.disabled = false;
-                return;
+                    if (!res.ok) {
+                        const msg = (payload && (payload.detail || payload.error)) ? (payload.detail || payload.error) : `Error ${res.status}`;
+                        if (feedback) feedback.textContent = msg;
+                        btn.disabled = false;
+                        return;
+                    }
+
+                    await applyGameStateUpdate(payload);
+
+                    const st = payload && payload.game_state ? payload.game_state : null;
+                    if (st && st.pending_duel) {
+                        showDuelModal();
+                        renderDuelUI(st.pending_duel, st);
+                    }
+
+                    if (feedback) feedback.textContent = "";
+                } catch (e) {
+                    console.error(e);
+                    if (feedback) feedback.textContent = "Network error while selecting opponent.";
+                    btn.disabled = false;
                 }
-
-                await applyGameStateUpdate(payload);
-
-                const st = payload && payload.game_state ? payload.game_state : null;
-                if (st && st.pending_duel) {
-                showDuelModal();
-                renderDuelUI(st.pending_duel, st);
-                }
-
-                if (feedback) feedback.textContent = "";
-            } catch (e) {
-                console.error(e);
-                if (feedback) feedback.textContent = "Network error while selecting opponent.";
-                btn.disabled = false;
-            }
             };
 
             grid.appendChild(btn);
@@ -1111,9 +1112,9 @@ function renderDuelUI(duel, gameState) {
         if (added === 0) {
             const headerRight = document.getElementById("dHeaderRight");
             if (headerRight) {
-            headerRight.innerHTML = `<button type="button" class="gun-x" id="dExitBtn" aria-label="Close">✕</button>`;
-            const exitBtn = document.getElementById("dExitBtn");
-            if (exitBtn) exitBtn.onclick = skipDuelAndClose;
+                headerRight.innerHTML = `<button type="button" class="gun-x" id="dExitBtn" aria-label="Close">✕</button>`;
+                const exitBtn = document.getElementById("dExitBtn");
+                if (exitBtn) exitBtn.onclick = skipDuelAndClose;
             }
 
             body.innerHTML = `
@@ -1297,7 +1298,7 @@ function updateBoardUI(state) {
         const pb = typeof b.position === "number" ? b.position : 0;
         return pa - pb;
     });
-    
+
     const boardLen = Number(state.board_length || tilesRaw.length || 0);
     const lastPos = boardLen > 0 ? (boardLen - 1) : (tilesRaw.length - 1);
 
@@ -1305,10 +1306,10 @@ function updateBoardUI(state) {
         const pos = typeof tile.position === "number" ? tile.position : 0;
         const tPlayers = playersByPos[pos] || [];
         const hasCurrent = tPlayers.some(p => p.is_current_turn);
-        
+
         let label = tile.label || "";
         const type = (tile.type || tile.tile_type || "empty").toLowerCase();
-        
+
         if (!label) {
             switch (type) {
                 case "start": label = "Start"; break;
@@ -1326,10 +1327,10 @@ function updateBoardUI(state) {
                 default: label = ""; break;
             }
         }
-        
+
         /* --- BONUS TILE HTML (🎁 + corner badge) --- */
         let labelHtml = escapeHtml(label);
-        
+
         if (type === "bonus") {
             labelHtml = `<div class="board-tile-symbol">🎁</div>`;
         }
@@ -1363,101 +1364,112 @@ function updateBoardUI(state) {
 // ---------- UI: players panel ----------
 
 function updatePlayersUI(state) {
-  // RIGHT BOX = Rankings only
-  if (!state) return;
+    // RIGHT BOX = Rankings only
+    if (!state) return;
 
-  const listEl = document.getElementById("player-list");
-  if (!listEl) return;
+    const listEl = document.getElementById("player-list");
+    if (!listEl) return;
 
-  const playersRaw = Array.isArray(state.players) ? state.players : [];
+    const playersRaw = Array.isArray(state.players) ? state.players : [];
 
-  // Deduplicate by id
-  const seenIds = new Set();
-  const players = [];
-  for (const p of playersRaw) {
-    if (p && !seenIds.has(p.id)) {
-      seenIds.add(p.id);
-      players.push(p);
+    // Deduplicate by id
+    const seenIds = new Set();
+    const players = [];
+    for (const p of playersRaw) {
+        if (p && !seenIds.has(p.id)) {
+            seenIds.add(p.id);
+            players.push(p);
+        }
     }
-  }
 
-  // Ranking rule: POSITION (front = higher rank)
-  // If you want coins/hp-based rank, tell me and I’ll switch the sort.
-  const ranked = players
-    .slice()
-    .sort((a, b) => (b.position ?? 0) - (a.position ?? 0))
-    .map((p, idx) => ({ ...p, rank: idx + 1 }));
+    // Ranking rule: POSITION (front = higher rank)
+    // If you want coins/hp-based rank, tell me and I’ll switch the sort.
+    const ranked = players
+        .slice()
+        .sort((a, b) => (b.position ?? 0) - (a.position ?? 0))
+        .map((p, idx) => ({ ...p, rank: idx + 1 }));
 
-  const html = ranked
-    .map((p) => {
-      const r = p.rank; // now always 1..N
-      const badgeClass =
-        r === 1
-          ? "rank-badge gold"
-          : r === 2
-          ? "rank-badge silver"
-          : r === 3
-          ? "rank-badge bronze"
-          : "rank-badge";
+    const html = ranked
+        .map((p) => {
+            const r = p.rank; // now always 1..N
+            const badgeClass =
+                r === 1
+                    ? "rank-badge gold"
+                    : r === 2
+                        ? "rank-badge silver"
+                        : r === 3
+                            ? "rank-badge bronze"
+                            : "rank-badge";
 
-      const name = (p.username ?? "").toString().trim() || "Player";
+            const name = (p.username ?? "").toString().trim() || "Player";
 
-      return `
+            return `
         <li class="rank-row">
           <div class="rank-left">
-            <div class="${badgeClass}" aria-label="Rank ${r}">${r}</div>
-            <div class="rank-name">
-              ${escapeHtml(name)}
-              ${p.is_you ? '<span class="rank-tag">You</span>' : ""}
-              ${p.is_current_turn ? '<span class="rank-tag turn">Turn</span>' : ""}
+            <div class="${badgeClass}">${r}</div>
+            <div class="rank-info" style="display:flex; flex-direction:column; gap:4px; margin-left:10px;">
+                <div class="rank-name" style="font-weight:700; font-size:15px; color:#fff;">
+                  ${escapeHtml(name)}
+                  ${p.is_you ? '<span class="rank-tag">You</span>' : ""}
+                  ${p.is_current_turn ? '<span class="rank-tag turn">Turn</span>' : ""}
+                </div>
+                <div class="rank-stats" style="display:flex; gap:8px; font-size:12px; color:#94a3b8;">
+                  <span class="rank-stat hp">❤️ HP: <strong>${p.hp ?? 0}</strong></span>
+                  <span class="rank-stat coins">🪙 Coins: <strong>${p.coins ?? 0}</strong></span>
+                  <span class="rank-stat pos">📍 Pos: <strong>${p.position ?? 0}</strong></span>
+                </div>
             </div>
           </div>
         </li>
       `;
-    })
-    .join("");
+        })
+        .join("");
 
-  listEl.innerHTML = html || "<li>No players.</li>";
+    listEl.innerHTML = html || "<li>No players.</li>";
 }
 
 
 function updatePlayerStatusUI(state) {
-  if (!state) return;
+    if (!state) return;
 
-  const wrap = document.getElementById("player-status-body");
-  if (!wrap) return;
+    const wrap = document.getElementById("player-status-body");
+    if (!wrap) return;
 
-  const playersRaw = Array.isArray(state.players) ? state.players : [];
+    const playersRaw = Array.isArray(state.players) ? state.players : [];
 
-  // Deduplicate by id
-  const seenIds = new Set();
-  const players = [];
-  for (const p of playersRaw) {
-    if (p && !seenIds.has(p.id)) {
-      seenIds.add(p.id);
-      players.push(p);
+    // Deduplicate by id
+    const seenIds = new Set();
+    const players = [];
+    for (const p of playersRaw) {
+        if (p && !seenIds.has(p.id)) {
+            seenIds.add(p.id);
+            players.push(p);
+        }
     }
-  }
 
-  // Stable order: turn_order if exists
-  players.sort((a, b) => {
-    const ta = typeof a.turn_order === "number" ? a.turn_order : 0;
-    const tb = typeof b.turn_order === "number" ? b.turn_order : 0;
-    return ta - tb;
-  });
+    // STABLE ORDER: turn_order if exists
+    players.sort((a, b) => {
+        const ta = typeof a.turn_order === "number" ? a.turn_order : 0;
+        const tb = typeof b.turn_order === "number" ? b.turn_order : 0;
+        return ta - tb;
+    });
 
-  const html = players
-    .map((p) => {
-      const name = (p.username ?? "").toString().trim() || "Player";
-      const initial = name.charAt(0).toUpperCase() || "?";
+    // FILTER: Only show "you" (the current user) in the status list
+    const yourPlayer = players.find(p => p.is_you);
+    const playersToShow = yourPlayer ? [yourPlayer] : [];
 
-      const hp = typeof p.hp === "number" ? p.hp : 0;
-      const coins = typeof p.coins === "number" ? p.coins : 0;
-      const pos = typeof p.position === "number" ? p.position : 0;
+    const html = playersToShow
+        .map((p) => {
+            const name = (p.username ?? "").toString().trim() || "Player";
+            const initial = name.charAt(0).toUpperCase() || "?";
 
-      const alive = typeof p.is_alive === "boolean" ? p.is_alive : hp > 0;
+            const hp = typeof p.hp === "number" ? p.hp : 0;
+            const coins = typeof p.coins === "number" ? p.coins : 0;
+            const pos = typeof p.position === "number" ? p.position : 0;
 
-      return `
+            const alive = typeof p.is_alive === "boolean" ? p.is_alive : hp > 0;
+
+            return `
         <div class="ps-item">
             <div class="ps-left">
             <div class="ps-avatar">${escapeHtml(initial)}</div>
@@ -1495,10 +1507,10 @@ function updatePlayerStatusUI(state) {
         </div>
         `;
 
-    })
-    .join("");
+        })
+        .join("");
 
-  wrap.innerHTML = html || `<div class="ps-empty">No players.</div>`;
+    wrap.innerHTML = html || `<div class="ps-empty">No players.</div>`;
 }
 
 
@@ -1644,22 +1656,22 @@ function renderInventoryUI(state) {
 
             // swap_position needs target player (adjacent)
             if (effect === "swap_position") {
-            const players = Array.isArray(state.players) ? state.players : [];
-            const me = players.find((p) => p.is_you);
-            if (!me) {
-                alert("Could not identify your player.");
+                const players = Array.isArray(state.players) ? state.players : [];
+                const me = players.find((p) => p.is_you);
+                if (!me) {
+                    alert("Could not identify your player.");
+                    return;
+                }
+
+                const ahead = players.filter((p) => !p.is_you && p.is_alive && p.position > me.position);
+
+                if (ahead.length === 0) {
+                    alert("No alive player ahead of you to swap with.");
+                    return;
+                }
+
+                useCard(gameId, cardId);
                 return;
-            }
-
-            const ahead = players.filter((p) => !p.is_you && p.is_alive && p.position > me.position);
-
-            if (ahead.length === 0) {
-                alert("No alive player ahead of you to swap with.");
-                return;
-            }
-
-            useCard(gameId, cardId);
-            return;
             }
 
 
@@ -1715,10 +1727,10 @@ document.addEventListener("click", (e) => {
     if (e.target && e.target.id === "orderCloseBtn") hideOrderModal();
 });
 document.addEventListener("click", (e) => {
-  if (e.target && e.target.id === "orderRollBtn") {
-    const gameId = window.GAME_ID;
-    handleRollClick(`/games/${gameId}/order_roll/`);
-  }
+    if (e.target && e.target.id === "orderRollBtn") {
+        const gameId = window.GAME_ID;
+        handleRollClick(`/games/${gameId}/order_roll/`);
+    }
 });
 
 
@@ -1778,8 +1790,8 @@ async function fetchGameState(gameId) {
         const data = await resp.json();
 
         updateActivityFromStateDiff(window.GAME_STATE || null, data);
-        window.GAME_STATE = data; 
-        
+        window.GAME_STATE = data;
+
         if (data.status === "ordering") {
             showOrderModal();
             renderOrderModal(data);
@@ -2055,147 +2067,155 @@ let CHAT_POLL_MS = 2000;
 let chatPoller = null;
 
 function getChatEls() {
-  return {
-    box: document.getElementById("chatMessages"),
-    input: document.getElementById("chatInput"),
-    sendBtn: document.getElementById("chatSendBtn"),
-    form: document.getElementById("chatForm"),
-    liveCount: document.getElementById("chatLiveCount"),
-  };
+    return {
+        box: document.getElementById("chatMessages"),
+        input: document.getElementById("chatInput"),
+        sendBtn: document.getElementById("chatSendBtn"),
+        form: document.getElementById("chatForm"),
+        liveCount: document.getElementById("chatLiveCount"),
+    };
 }
 
 function escapeHtml(str) {
-  if (str === null || str === undefined) return "";
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
+    if (str === null || str === undefined) return "";
+    return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
 }
 
 function safeInitial(name) {
-  const t = (name || "").trim();
-  return t ? t[0].toUpperCase() : "?";
+    const t = (name || "").trim();
+    return t ? t[0].toUpperCase() : "?";
 }
 
 function chatScrollToBottom() {
-  const { box } = getChatEls();
-  if (!box) return;
-  box.scrollTop = box.scrollHeight;
+    const { box } = getChatEls();
+    if (!box) return;
+    box.scrollTop = box.scrollHeight;
 }
 
 function setSendEnabled() {
-  const { input, sendBtn } = getChatEls();
-  if (!input || !sendBtn) return;
-  sendBtn.disabled = (input.value || "").trim().length === 0;
+    const { input, sendBtn } = getChatEls();
+    if (!input || !sendBtn) return;
+    sendBtn.disabled = (input.value || "").trim().length === 0;
 }
 
 function renderChatMessages(messages) {
-  const { box, liveCount } = getChatEls();
-  if (!box) return;
+    const { box, liveCount } = getChatEls();
+    if (!box) return;
 
-  box.innerHTML = "";
+    box.innerHTML = "";
 
-  for (const m of messages) {
-    const row = document.createElement("div");
-    row.className = m.is_you ? "chat-row you" : "chat-row";
-    row.setAttribute("data-initial", safeInitial(m.user));
+    for (const m of messages) {
+        const row = document.createElement("div");
+        row.className = m.is_you ? "chat-row you" : "chat-row";
+        row.setAttribute("data-initial", safeInitial(m.user));
 
-    row.innerHTML = `<div class="chat-text">${escapeHtml(m.message)}</div>`;
-    box.appendChild(row);
-  }
+        const bubbleClass = m.is_you ? "chat-bubble you" : "chat-bubble";
 
-  if (liveCount) liveCount.textContent = String(messages.length);
-  chatScrollToBottom();
+        row.innerHTML = `
+            <div class="chat-username">${escapeHtml(m.user || 'Unknown')}</div>
+            <div class="${bubbleClass}">
+                <div class="chat-text">${escapeHtml(m.message)}</div>
+                <div class="chat-time">${m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</div>
+            </div>
+        `;
+        box.appendChild(row);
+    }
+
+    if (liveCount) liveCount.textContent = String(messages.length);
+    chatScrollToBottom();
 }
 
 async function fetchChat(gameId) {
-  const res = await fetch(`/games/${gameId}/chat/messages/`, {
-    headers: { "X-Requested-With": "XMLHttpRequest" },
-  });
-  const data = await res.json().catch(() => null);
-  if (!res.ok || !data) return;
+    const res = await fetch(`/games/${gameId}/chat/messages/`, {
+        headers: { "X-Requested-With": "XMLHttpRequest" },
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data) return;
 
-  const messages = Array.isArray(data.messages) ? data.messages : [];
-  renderChatMessages(messages);
+    const messages = Array.isArray(data.messages) ? data.messages : [];
+    renderChatMessages(messages);
 }
 
 function getCSRFToken() {
-  const name = "csrftoken";
-  const cookies = document.cookie ? document.cookie.split(";") : [];
-  for (let c of cookies) {
-    c = c.trim();
-    if (c.startsWith(name + "=")) return decodeURIComponent(c.substring(name.length + 1));
-  }
-  return "";
+    const name = "csrftoken";
+    const cookies = document.cookie ? document.cookie.split(";") : [];
+    for (let c of cookies) {
+        c = c.trim();
+        if (c.startsWith(name + "=")) return decodeURIComponent(c.substring(name.length + 1));
+    }
+    return "";
 }
 
 async function sendChat(gameId, text) {
-  const res = await fetch(`/games/${gameId}/chat/send/`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-CSRFToken": getCSRFToken(),
-      "X-Requested-With": "XMLHttpRequest",
-    },
-    body: JSON.stringify({ message: text }),
-  });
+    const res = await fetch(`/games/${gameId}/chat/send/`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": getCSRFToken(),
+            "X-Requested-With": "XMLHttpRequest",
+        },
+        body: JSON.stringify({ message: text }),
+    });
 
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const msg = (data && data.detail) ? data.detail : `Chat send failed (${res.status})`;
-    throw new Error(msg);
-  }
-  return data;
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        const msg = (data && data.detail) ? data.detail : `Chat send failed (${res.status})`;
+        throw new Error(msg);
+    }
+    return data;
 }
 
 function initChat() {
-  const gameId = window.GAME_ID;
-  const { input, sendBtn, form } = getChatEls();
-  if (!gameId || !input || !sendBtn || !form) return;
+    const gameId = window.GAME_ID;
+    const { input, sendBtn, form } = getChatEls();
+    if (!gameId || !input || !sendBtn || !form) return;
 
-  // initial load
-  fetchChat(gameId);
+    // initial load
+    fetchChat(gameId);
 
-  // polling
-  if (chatPoller) clearInterval(chatPoller);
-  chatPoller = setInterval(() => fetchChat(gameId), CHAT_POLL_MS);
+    // polling
+    if (chatPoller) clearInterval(chatPoller);
+    chatPoller = setInterval(() => fetchChat(gameId), CHAT_POLL_MS);
 
-  // input enable/disable
-  input.addEventListener("input", setSendEnabled);
+    // input enable/disable
+    input.addEventListener("input", setSendEnabled);
 
-  // submit
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
+    // submit
+    form.addEventListener("submit", async (e) => {
+        e.preventDefault();
 
-    const text = (input.value || "").trim();
-    if (!text) return;
+        const text = (input.value || "").trim();
+        if (!text) return;
 
-    sendBtn.disabled = true;
+        sendBtn.disabled = true;
 
-    try {
-      await sendChat(gameId, text);
-      input.value = "";
-      setSendEnabled();
-      await fetchChat(gameId);
-      input.focus();
-    } catch (err) {
-      alert(err?.message || "Chat error");
-      setSendEnabled();
-    }
-  });
+        try {
+            await sendChat(gameId, text);
+            input.value = "";
+            setSendEnabled();
+            await fetchChat(gameId);
+            input.focus();
+        } catch (err) {
+            alert(err?.message || "Chat error");
+            setSendEnabled();
+        }
+    });
 
-  // Enter => send (oddiy input bo‘lgani uchun)
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      form.requestSubmit();
-    }
-  });
+    // Enter => send (oddiy input bo‘lgani uchun)
+    input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            form.requestSubmit();
+        }
+    });
 
-  // initial state
-  setSendEnabled();
+    // initial state
+    setSendEnabled();
 }
 
 
@@ -2216,18 +2236,18 @@ function initChat() {
 //     initChat();
 // });
 document.addEventListener("DOMContentLoaded", function () {
-  const gid = getGameIdFromPage();
-  if (!gid) return;
+    const gid = getGameIdFromPage();
+    if (!gid) return;
 
-  window.GAME_ID = gid;
+    window.GAME_ID = gid;
 
-  fetchGameState(gid);
-  window.gamePoller = setInterval(() => fetchGameState(gid), 2000);
+    fetchGameState(gid);
+    window.gamePoller = setInterval(() => fetchGameState(gid), 2000);
 
-  const rollBtn = document.getElementById("roll-button");
-  if (rollBtn) rollBtn.addEventListener("click", handleRollClick);
+    const rollBtn = document.getElementById("roll-button");
+    if (rollBtn) rollBtn.addEventListener("click", handleRollClick);
 
-  initChat(); // ✅ shu kerak
+    initChat(); // ✅ shu kerak
 });
 
 

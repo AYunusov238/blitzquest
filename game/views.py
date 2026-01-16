@@ -555,21 +555,21 @@ def game_start(request, game_id: int):
 
     else:
         # Standard start for Finish Line / Survival
-        # NEW: go into ORDERING phase to roll for turn order
-        game.status = Game.Status.ORDERING
+        # NEW: Skip ORDERING, go straight to ACTIVE
+        game.status = Game.Status.ACTIVE
         game.current_turn_index = 0
 
-        # reset positions
-        for player in game.players.all():
+        # Randomize turn order
+        players_list = list(game.players.all())
+        random.shuffle(players_list)
+        
+        for idx, player in enumerate(players_list):
+            player.turn_order = idx
             player.position = 0
-            player.save(update_fields=["position"])
-
-        # init ordering state
-        player_ids = list(game.players.values_list("id", flat=True))
-        game.ordering_state = {
-            "pending_player_ids": player_ids,
-            "roll_history": {str(pid): [] for pid in player_ids},
-        }
+            player.save(update_fields=["turn_order", "position"])
+            
+        # Clear ordering state
+        game.ordering_state = None
         game.save(update_fields=["status", "current_turn_index", "ordering_state"])
 
 
