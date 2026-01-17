@@ -1,0 +1,397 @@
+/* ========== Profile V3 – Exact Match Redesign ========== */
+
+/* Overall Container & Body Class */
+body.profile-v3-body {
+    background: url('../images/auth-bg.png') no-repeat center center / cover fixed !important;
+    overflow-x: hidden;
+}
+
+body.profile-v3-body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 0;
+    pointer-events: none;
+}
+
+.profile-v3-container {
+    display: flex;
+    min-height: 100vh;
+    width: 100%;
+    position: relative;
+    z-index: 1;
+}
+
+/* Sidebar Styling */
+.profile-v3-sidebar {
+    width: 300px;
+    background: rgba(10, 8, 18, 0.4);
+    backdrop-filter: blur(15px);
+    border-right: 1px solid rgba(168, 85, 247, 0.2);
+    display: flex;
+    flex-direction: column;
+    padding: 3rem 1.5rem;
+    z-index: 10;
+}
+
+.sidebar-user-info {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    margin-bottom: 3rem;
+}
+
+.profile-v3-avatar-circle {
+    width: 100px;
+    height: 100px;
+    border-radius: 50%;
+    background: #7c3aed;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 1.5rem;
+    overflow: hidden;
+    box-shadow: 0 0 30px rgba(124, 58, 237, 0.3);
+}
+
+.v3-avatar-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.v3-avatar-icon {
+    width: 50%;
+    height: 50%;
+    color: #ffffff;
+}
+
+.user-v3-name {
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: #ffffff;
+    margin-bottom: 0.2rem;
+}
+
+.user-v3-role {
+    font-size: 0.95rem;
+    color: #94a3b8;
+    opacity: 0.8;
+}
+
+/* Sidebar Nav Buttons */
+.sidebar-v3-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.v3-nav-btn {
+    width: 100%;
+    padding: 1rem 1.5rem;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 1rem;
+    font-weight: 500;
+    transition: all 0.3s ease;
+    text-decoration: none !important;
+}
+
+.btn-gradient {
+    background: linear-gradient(90deg, #7c3aed 0%, #6366f1 100%);
+    color: #ffffff;
+    box-shadow: 0 10px 20px rgba(99, 102, 241, 0.2);
+}
+
+.btn-gradient:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 15px 30px rgba(99, 102, 241, 0.3);
+}
+
+.btn-ghost {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #ffffff;
+}
+
+.btn-ghost:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.v3-btn-icon {
+    margin-right: 12px;
+    font-size: 1.2rem;
+}
+
+.v3-btn-arrow {
+    transform: rotate(180deg);
+    font-size: 1.2rem;
+    opacity: 0.7;
+}
+
+/* Main Content Styling */
+.profile-v3-main {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 4rem;
+}
+
+.profile-v3-card {
+    width: 100%;
+    max-width: 1000px;
+    background: rgba(16, 12, 28, 0.65);
+    backdrop-filter: blur(25px);
+    border-radius: 32px;
+    border: 1px solid rgba(168, 85, 247, 0.3);
+    padding: 3rem;
+    box-shadow:
+        0 8px 32px 0 rgba(0, 0, 0, 0.8),
+        inset 0 0 20px rgba(168, 85, 247, 0.1);
+    position: relative;
+}
+
+.v3-card-title {
+    font-size: 2.2rem;
+    font-weight: 700;
+    color: #ffffff;
+    margin-bottom: 2.5rem;
+}
+
+.v3-card-content {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 4rem;
+}
+
+/* Settings Column */
+.v3-settings-col,
+.v3-history-col {
+    display: flex;
+    flex-direction: column;
+}
+
+.v3-section-label {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #6366f1;
+    margin-bottom: 1.5rem;
+    display: flex;
+    align-items: center;
+}
+
+.v3-upload-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.8rem;
+    margin-bottom: 2rem;
+    width: fit-content;
+}
+
+.v3-photo-circle {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: #ffffff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: transform 0.2s;
+}
+
+.v3-photo-circle:hover {
+    transform: scale(1.05);
+}
+
+.v3-camera-icon {
+    font-size: 1.5rem;
+    color: #000000;
+}
+
+.v3-file-input {
+    display: none;
+}
+
+.v3-upload-text {
+    font-size: 0.85rem;
+    color: #6366f1;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+/* Form Styling */
+.v3-form-group {
+    margin-bottom: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+
+.v3-form-group label {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #ffffff;
+}
+
+.v3-form-group input {
+    width: 100%;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 1rem 1.2rem;
+    color: #ffffff;
+    font-size: 1rem;
+    outline: none;
+    transition: all 0.2s;
+}
+
+.v3-form-group input:focus {
+    border-color: #6366f1;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.date-input-wrapper {
+    position: relative;
+}
+
+.calendar-icon {
+    position: absolute;
+    right: 15px;
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0.6;
+}
+
+.v3-form-actions {
+    display: flex;
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.v3-btn-ghost {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #ffffff;
+    padding: 1rem;
+    border-radius: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.v3-btn-primary {
+    flex: 1.5;
+    background: linear-gradient(90deg, #6366f1 0%, #a855f7 100%);
+    border: none;
+    color: #ffffff;
+    padding: 1rem;
+    border-radius: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 10px 20px rgba(99, 102, 241, 0.2);
+}
+
+.v3-btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 15px 30px rgba(99, 102, 241, 0.3);
+}
+
+/* History List */
+.v3-history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    max-height: 400px;
+    overflow-y: auto;
+    padding-right: 0.5rem;
+}
+
+.v3-history-list::-webkit-scrollbar {
+    width: 4px;
+}
+
+.v3-history-list::-webkit-scrollbar-thumb {
+    background: rgba(168, 85, 247, 0.3);
+    border-radius: 10px;
+}
+
+.v3-history-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 1.2rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.v3-history-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #ffffff;
+    margin-bottom: 0.4rem;
+}
+
+.v3-history-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.v3-meta-id,
+.v3-meta-date {
+    font-size: 0.8rem;
+    color: #94a3b8;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.v3-history-time {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: #6366f1;
+    font-weight: 600;
+}
+
+.v3-icon {
+    font-size: 0.9rem;
+}
+
+.v3-clock-icon {
+    font-size: 1.2rem;
+}
+
+/* Responsive */
+@media (max-width: 1200px) {
+    .profile-v3-card {
+        max-width: 900px;
+    }
+}
+
+@media (max-width: 992px) {
+    .profile-v3-container {
+        flex-direction: column;
+    }
+
+    .profile-v3-sidebar {
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid rgba(168, 85, 247, 0.2);
+    }
+
+    .v3-card-content {
+        grid-template-columns: 1fr;
+        gap: 3rem;
+    }
+}
